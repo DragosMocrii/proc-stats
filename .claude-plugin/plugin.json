@@ -1,6 +1,7 @@
 {
   "name": "proc-stats",
-  "version": "0.1.0",
-  "description": "Status line with Claude Code's memory, peak memory, CPU and uptime, and those of the processes it started",
-  "author": { "name": "Dragos Mocrii", "email": "dragosmocrii@gmail.com" }
+  "version": "0.2.0",
+  "description": "Status line and task-manager pane with Claude Code's memory, CPU and uptime, and those of the processes it started",
+  "author": { "name": "Dragos Mocrii", "email": "dragosmocrii@gmail.com" },
+  "types": "./types/index.d.ts"
 }

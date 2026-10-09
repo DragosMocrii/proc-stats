@@ -1,8 +1,13 @@
+import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
+import type { ProcRow, Reading, Snapshot } from '../types'
+import { formatBytes, formatDuration, formatPair, formatPercent } from './format'
+import { drawPane } from './pane'
 import {
   descendants,
   isComplete,
+  parseCmdline,
   parseMacFields,
   parseProcStat,
   parseProcStatus,
@@ -10,68 +15,128 @@ import {
   parsePsTable,
   powerShellSample,
   toRow,
-  windowsUsage,
+  windowsProc,
 } from './stats'
-import type { Platform, Sample, Usage } from './stats'
+import type { Platform, Proc, Sample } from './stats'
 
-// PowerShell takes a moment to start, so Windows samples less often.
-const INTERVAL_MS: Record<Platform, number> = { linux: 5000, mac: 5000, windows: 10000 }
+const PANE = 'proc-stats'
+const COMMAND = 'proc-stats'
+// Each reading starts ps (PowerShell on Windows), which costs more on a busy Mac and most on Windows.
+const INTERVAL_MS: Record<Platform, number> = { linux: 1000, mac: 2000, windows: 5000 }
+// A build can start hundreds of workers; the pane needs no more than this.
+const MAX_ROWS = 500
+
+const reading = atom({ plugin: 'proc-stats', key: 'reading' } as const, {} as Reading)
+const isOpen = atom({ plugin: 'proc-stats', key: 'isOpen' } as const, false)
+const OPEN = { id: PANE, title: 'Processes' }
 
 // The engine, and the processes it started (undefined when the table cannot be read).
-type Reading = { engine: Sample; children?: Usage[]; wallMs: number }
+export type Timed = { engine: Sample; children?: Proc[]; wallMs: number }
 
-export const formatBytes = (kb: number) =>
-  kb >= 1024 * 1024 ? `${(kb / 1024 / 1024).toFixed(2)}GB` : `${Math.round(kb / 1024)}MB`
+// CPU a process spent since the last reading, and as a share of one core. A pid
+// whose process is younger than the one seen before was reused: a new process,
+// counted whole over the time it has run.
+export const procCpu = (now: Proc, was: Proc | undefined, elapsed: number) => {
+  const isSame = was !== undefined && now.uptimeSeconds >= was.uptimeSeconds - 1
+  if (isSame) {
+    const delta = Math.max(0, now.cpuSeconds - was.cpuSeconds)
 
-// With children, both numbers in the larger one's unit: `(484 + 15)MB`.
-export const formatPair = (kb: number, childKb: number | undefined) => {
-  if (childKb === 0) return formatBytes(kb)
-  const isGb = Math.max(kb, childKb ?? 0) >= 1024 * 1024
-  const one = (n: number) => (isGb ? (n / 1024 / 1024).toFixed(2) : String(Math.round(n / 1024)))
+    return { delta, percent: (delta / elapsed) * 100 }
+  }
+  const window = Math.max(1, Math.min(elapsed, now.uptimeSeconds))
 
-  return `(${one(kb)} + ${childKb === undefined ? '?' : one(childKb)})${isGb ? 'GB' : 'MB'}`
+  return { delta: now.cpuSeconds, percent: (now.cpuSeconds / window) * 100 }
 }
 
-export const formatDuration = (seconds: number) => {
-  const s = Math.max(0, Math.floor(seconds))
-  const d = Math.floor(s / 86400)
-  const h = Math.floor((s % 86400) / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  if (d > 0) return `${d}d ${h}h`
-  if (h > 0) return `${h}h ${m}m`
-  if (m > 0) return `${m}m ${s % 60}s`
+// Depth-first from the engine, each level by pid.
+export const treeOrder = (procs: Proc[], root: number) => {
+  const byParent = new Map<number, Proc[]>()
+  for (const proc of procs) byParent.set(proc.ppid, [...(byParent.get(proc.ppid) ?? []), proc])
+  for (const list of byParent.values()) list.sort((a, b) => a.pid - b.pid)
+  const ordered: { proc: Proc; depth: number }[] = []
+  const seen = new Set<number>()
+  const visit = (pid: number, depth: number) => {
+    for (const proc of byParent.get(pid) ?? []) {
+      if (seen.has(proc.pid)) continue
+      seen.add(proc.pid)
+      ordered.push({ proc, depth })
+      visit(proc.pid, depth + 1)
+    }
+  }
+  visit(root, 0)
+  // A process whose parent ended between reads is kept, at the top level.
+  for (const proc of procs) if (!seen.has(proc.pid)) ordered.push({ proc, depth: 0 })
 
-  return `${s}s`
+  return ordered
 }
 
-// CPU is the share of one core between two readings, as top shows it.
-export const cpuPercent = (cpuSeconds: number, elapsedSeconds: number) =>
-  Math.max(0, cpuSeconds / elapsedSeconds) * 100
+export const buildSnapshot = (
+  platform: Platform,
+  pid: number,
+  now: Timed,
+  before: Timed | undefined,
+): Snapshot => {
+  const elapsed = before ? (now.wallMs - before.wallMs) / 1000 : 0
+  const isMeasured = before !== undefined && elapsed > 0
+  const was = new Map((before?.children ?? []).map(proc => [proc.pid, proc]))
+  const canCompare = isMeasured && before?.children !== undefined
+  let childDelta = 0
+  const rows = now.children
+    ? treeOrder(now.children, pid).map(({ proc, depth }): ProcRow => {
+        const cpu = canCompare ? procCpu(proc, was.get(proc.pid), elapsed) : undefined
+        childDelta += cpu?.delta ?? 0
 
-// CPU the children spent since the last reading: each process's time over what
-// it had then, a new process's whole time. Processes that ended in between drop out.
-export const childCpuSeconds = (now: Usage[], before: Usage[]) => {
-  const was = new Map(before.map(usage => [usage.pid, usage.cpuSeconds]))
+        return {
+          pid: proc.pid,
+          ppid: proc.ppid,
+          depth,
+          command: proc.command,
+          rssKb: proc.rssKb,
+          cpuPercent: cpu ? cpu.percent : null,
+          uptimeSeconds: proc.uptimeSeconds,
+        }
+      })
+    : null
 
-  return now.reduce((sum, { pid, cpuSeconds }) => sum + Math.max(0, cpuSeconds - (was.get(pid) ?? 0)), 0)
+  return {
+    platform,
+    pid,
+    engine: {
+      rssKb: now.engine.rssKb,
+      peakKb: now.engine.peakKb,
+      cpuPercent:
+        isMeasured && before
+          ? (Math.max(0, now.engine.cpuSeconds - before.engine.cpuSeconds) / elapsed) * 100
+          : null,
+      uptimeSeconds: now.engine.uptimeSeconds,
+    },
+    children: rows,
+    childCount: rows?.length ?? 0,
+    childKb: rows?.reduce((sum, row) => sum + row.rssKb, 0) ?? 0,
+    childCpuPercent: canCompare ? (childDelta / elapsed) * 100 : null,
+  }
 }
+
+// What the pane is handed: the totals over every process, the rows capped.
+export const capRows = (snapshot: Snapshot): Snapshot => ({
+  ...snapshot,
+  children: snapshot.children?.slice(0, MAX_ROWS) ?? null,
+})
 
 // The children's share shows only while there are any; `?` when the table could not be read.
-export const formatLine = (now: Reading, before: Reading | undefined) => {
-  const elapsed = before ? (now.wallMs - before.wallMs) / 1000 : 0
-  const hasChildren = now.children === undefined || now.children.length > 0
-  const childKb = hasChildren ? now.children?.reduce((sum, usage) => sum + usage.rssKb, 0) : 0
+export const statusLine = (snapshot: Snapshot) => {
+  const { engine, children, childCpuPercent } = snapshot
+  const hasChildren = children === null || snapshot.childCount > 0
   let cpu = '…'
-  if (before && elapsed > 0) {
-    const own = cpuPercent(now.engine.cpuSeconds - before.engine.cpuSeconds, elapsed).toFixed(1)
-    const children =
-      now.children && before.children
-        ? cpuPercent(childCpuSeconds(now.children, before.children), elapsed).toFixed(1)
-        : '?'
-    cpu = hasChildren ? `(${own} + ${children})%` : `${own}%`
+  if (engine.cpuPercent !== null) {
+    const own = engine.cpuPercent.toFixed(1)
+    cpu = hasChildren
+      ? `(${own} + ${childCpuPercent === null ? '?' : childCpuPercent.toFixed(1)})%`
+      : formatPercent(engine.cpuPercent)
   }
+  const childKb = children === null ? undefined : snapshot.childKb
 
-  return `mem ${formatPair(now.engine.rssKb, childKb)} · peak ${formatBytes(now.engine.peakKb)} · cpu ${cpu} · up ${formatDuration(now.engine.uptimeSeconds)}`
+  return `mem ${formatPair(engine.rssKb, hasChildren ? childKb : 0)} · peak ${formatBytes(engine.peakKb)} · cpu ${cpu} · up ${formatDuration(engine.uptimeSeconds)}`
 }
 
 const detectPlatform = async ($: EngineInterface): Promise<Platform> => {
@@ -105,16 +170,24 @@ const psTable = async ($: EngineInterface, columns: string) => {
   return parsePsTable(stdout)
 }
 
-const linuxUsage = async ($: EngineInterface, pid: number): Promise<Usage | undefined> => {
+const linuxProc = async ($: EngineInterface, pid: number, uptime: string): Promise<Proc | undefined> => {
   try {
-    const [status, stat] = await Promise.all([
+    const [status, stat, cmdline] = await Promise.all([
       $.fs.read(`/proc/${pid}/status`),
       $.fs.read(`/proc/${pid}/stat`),
+      // Its own failure only costs the arguments: the name from stat stands in.
+      $.fs.read(`/proc/${pid}/cmdline`).catch(() => ''),
     ])
-    // A zombie has no VmRSS: it holds no memory.
+    // A zombie has no VmRSS and no command line.
     const { rssKb } = parseProcStatus(status)
+    const { name, ...rest } = parseProcStat(stat, uptime)
 
-    return { pid, rssKb: Number.isFinite(rssKb) ? rssKb : 0, cpuSeconds: parseProcStat(stat, '0').cpuSeconds }
+    return {
+      pid,
+      ...rest,
+      rssKb: Number.isFinite(rssKb) ? rssKb : 0,
+      command: parseCmdline(cmdline) || name,
+    }
   } catch {
     // Ended since the table was read.
     return undefined
@@ -127,30 +200,30 @@ const readLinux = async ($: EngineInterface, pid: number) => {
     $.fs.read(`/proc/${pid}/stat`),
     $.fs.read('/proc/uptime'),
   ])
-  const engine = { ...parseProcStatus(status), ...parseProcStat(stat, uptime) }
+  const { rssKb, peakKb } = parseProcStatus(status)
+  const { cpuSeconds, uptimeSeconds } = parseProcStat(stat, uptime)
+  const engine = { rssKb, peakKb, cpuSeconds, uptimeSeconds }
   try {
     const { selfPid, rows } = await psTable($, 'pid=,ppid=')
     const pids = descendants(rows.map(toRow), pid, selfPid)
-    const usages = await Promise.all(pids.map(child => linuxUsage($, child)))
+    const procs = await Promise.all(pids.map(child => linuxProc($, child, uptime)))
 
-    return { engine, children: usages.filter(usage => usage !== undefined) }
+    return { engine, children: procs.filter(proc => proc !== undefined) }
   } catch {
     return { engine }
   }
 }
 
 const readMac = async ($: EngineInterface, pid: number, peakSeenKb: number) => {
-  const { selfPid, rows } = await psTable($, 'pid=,ppid=,rss=,time=,etime=')
+  const { selfPid, rows } = await psTable($, 'pid=,ppid=,rss=,time=,etime=,command=')
   const own = rows.find(fields => Number(fields[0]) === pid)
   if (!own) throw new Error(`process ${pid} not listed`)
-  const ps = parseMacFields(own)
+  const { rssKb, cpuSeconds, uptimeSeconds } = parseMacFields(own)
   const pids = new Set(descendants(rows.map(toRow), pid, selfPid))
-  const children = rows
-    .filter(fields => pids.has(Number(fields[0])))
-    .map(fields => ({ pid: Number(fields[0]), ...parseMacFields(fields) }))
+  const children = rows.filter(fields => pids.has(Number(fields[0]))).map(parseMacFields)
 
   // ps has no peak, so the highest resident size seen stands in for it.
-  return { engine: { ...ps, peakKb: Math.max(peakSeenKb, ps.rssKb) }, children }
+  return { engine: { rssKb, cpuSeconds, uptimeSeconds, peakKb: Math.max(peakSeenKb, rssKb) }, children }
 }
 
 const readWindows = async ($: EngineInterface, pid: number) => {
@@ -158,15 +231,15 @@ const readWindows = async ($: EngineInterface, pid: number) => {
   const { engine, selfPid, rows } = parsePowerShell(stdout)
   const pids = new Set(descendants(rows.map(toRow), pid, selfPid))
 
-  return { engine, children: rows.filter(fields => pids.has(Number(fields[0]))).map(windowsUsage) }
+  return { engine, children: rows.filter(fields => pids.has(Number(fields[0]))).map(windowsProc) }
 }
 
-const read = (
+const readProcesses = (
   $: EngineInterface,
   platform: Platform,
   pid: number,
   peakSeenKb: number,
-): Promise<{ engine: Sample; children?: Usage[] }> => {
+): Promise<{ engine: Sample; children?: Proc[] }> => {
   switch (platform) {
     case 'linux':
       return readLinux($, pid)
@@ -177,24 +250,31 @@ const read = (
   }
 }
 
+// One loop feeds both views: the status line, and the reading the pane draws.
 const startSampling = async ($: EngineInterface) => {
+  const set = (next: Reading) => update($, reading, () => next)
+
   try {
     const platform = await detectPlatform($)
     const pid = await enginePid($, platform)
-    let before: Reading | undefined
+    let before: Timed | undefined
     let isBusy = false
 
     const sample = async () => {
       if (isBusy) return
       isBusy = true
       try {
-        const sample = await read($, platform, pid, before?.engine.peakKb ?? 0)
+        const sample = await readProcesses($, platform, pid, before?.engine.peakKb ?? 0)
         if (!isComplete(sample.engine)) throw new Error('unreadable sample')
         const now = { ...sample, wallMs: await $.clock.now() }
-        $.ui.status(formatLine(now, before))
+        const snapshot = buildSnapshot(platform, pid, now, before)
+        $.ui.status(statusLine(snapshot))
+        await set({ snapshot: capRows(snapshot) })
         before = now
       } catch {
-        $.ui.status(`proc-stats: cannot read process ${pid} on ${platform}`)
+        const error = `cannot read process ${pid} on ${platform}`
+        $.ui.status(`proc-stats: ${error}`)
+        await set({ error })
       } finally {
         isBusy = false
       }
@@ -203,15 +283,43 @@ const startSampling = async ($: EngineInterface) => {
     $.clock.every(INTERVAL_MS[platform], () => void sample())
     await sample()
   } catch (error) {
-    $.ui.status(`proc-stats: ${error instanceof Error ? error.message : 'unavailable'}`)
+    const text = error instanceof Error ? error.message : 'unavailable'
+    $.ui.status(`proc-stats: ${text}`)
+    await set({ error: text })
   }
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
+    await $.command.register({
+      name: COMMAND,
+      description: 'Show Claude Code and the processes it started in a task-manager pane',
+    })
     void startSampling($)
+    // A reload closes the pane (an unload no hook hears); put it back if it was open.
+    if (await read($, isOpen)) void $.ui.open(OPEN)
 
     return started
   })
+
+  on('command.run', { command: COMMAND }, async $ => {
+    const opened = await $.ui.open(OPEN)
+    await update($, isOpen, () => true)
+
+    return { text: opened.isPlaced ? 'Processes pane opened.' : 'Processes pane could not be placed.' }
+  })
+
+  // Diagnostic: says why the pane closed. An unload closes it before any hook hears.
+  on('ui.close', { id: PANE }, async ($, e, next) => {
+    $.ui.log(`proc-stats: Processes pane closed (${e.origin.kind})`)
+    const closed = await next(e)
+    await update($, isOpen, () => false)
+
+    return closed
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
+    drawPane($.ui.resolve(e), await read($, reading), e.props.bodyColumns),
+  )
 }

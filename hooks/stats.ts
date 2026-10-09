@@ -5,7 +5,15 @@ export type Platform = 'linux' | 'mac' | 'windows'
 
 export type Sample = { rssKb: number; peakKb: number; cpuSeconds: number; uptimeSeconds: number }
 
-export type Usage = { pid: number; rssKb: number; cpuSeconds: number }
+// One process below the engine.
+export type Proc = {
+  pid: number
+  ppid: number
+  command: string
+  rssKb: number
+  cpuSeconds: number
+  uptimeSeconds: number
+}
 
 export type Row = { pid: number; ppid: number }
 
@@ -19,16 +27,22 @@ export const parseProcStatus = (text: string) => {
   return { rssKb: kb('VmRSS'), peakKb: kb('VmHWM') }
 }
 
-// Linux: fields after the parenthesised command name, which may itself hold spaces.
+// Linux: the name sits in parentheses and may itself hold spaces and parentheses.
 export const parseProcStat = (stat: string, systemUptime: string) => {
+  const name = stat.slice(stat.indexOf('(') + 1, stat.lastIndexOf(')'))
   const rest = stat.slice(stat.lastIndexOf(')') + 2).split(' ')
   const startSeconds = Number(rest[19]) / TICKS_PER_SECOND
 
   return {
+    name,
+    ppid: Number(rest[1]),
     cpuSeconds: (Number(rest[11]) + Number(rest[12])) / TICKS_PER_SECOND,
     uptimeSeconds: Number(systemUptime.split(' ')[0]) - startSeconds,
   }
 }
+
+// Linux: /proc/<pid>/cmdline is NUL-separated; empty for a zombie.
+export const parseCmdline = (text: string) => text.split('\0').filter(Boolean).join(' ')
 
 // ps times: `[[dd-]hh:]mm:ss[.cc]` (etime, and time on Linux) or `mmm:ss.cc` (time on macOS).
 export const parsePsTime = (text: string) => {
@@ -56,15 +70,18 @@ export const parsePsTable = (text: string) => {
 
 export const toRow = (fields: string[]): Row => ({ pid: Number(fields[0]), ppid: Number(fields[1]) })
 
-// macOS: `pid ppid rss time etime` per process.
-export const parseMacFields = (fields: string[]) => ({
+// macOS: `pid ppid rss time etime command`, the command last since it holds spaces.
+export const parseMacFields = (fields: string[]): Proc => ({
+  pid: Number(fields[0]),
+  ppid: Number(fields[1]),
   rssKb: Number(fields[2]),
   cpuSeconds: parsePsTime(fields[3] ?? ''),
   uptimeSeconds: parsePsTime(fields[4] ?? ''),
+  command: fields.slice(5).join(' '),
 })
 
 // Windows: the engine's bytes, peak bytes, CPU and uptime seconds; PowerShell's
-// own pid; then `pid ppid bytes cpu100ns` per process, invariant culture.
+// own pid; then `pid ppid bytes cpu100ns ageSeconds command` per process.
 export const parsePowerShell = (text: string) => {
   const [engine = [], self = [], ...rest] = lines(text)
   const [rss, peak, cpu, up] = engine.map(Number)
@@ -81,21 +98,28 @@ export const parsePowerShell = (text: string) => {
   }
 }
 
-export const windowsUsage = (fields: string[]): Usage => ({
+export const windowsProc = (fields: string[]): Proc => ({
   pid: Number(fields[0]),
+  ppid: Number(fields[1]),
   rssKb: Number(fields[2]) / 1024,
   cpuSeconds: Number(fields[3]) / 1e7,
+  uptimeSeconds: Number(fields[4]),
+  command: fields.slice(5).join(' '),
 })
 
 export const powerShellSample = (pid: number) =>
   [
     `$c = [cultureinfo]::InvariantCulture`,
+    `$now = Get-Date`,
     `$p = Get-Process -Id ${pid}`,
     `[string]::Format($c, '{0} {1} {2:F2} {3:F0}', $p.WorkingSet64, $p.PeakWorkingSet64,` +
-      ` $p.TotalProcessorTime.TotalSeconds, ((Get-Date) - $p.StartTime).TotalSeconds)`,
+      ` $p.TotalProcessorTime.TotalSeconds, ($now - $p.StartTime).TotalSeconds)`,
     `$PID`,
-    `Get-CimInstance Win32_Process | ForEach-Object { [string]::Format($c, '{0} {1} {2} {3}',` +
-      ` $_.ProcessId, $_.ParentProcessId, $_.WorkingSetSize, $_.UserModeTime + $_.KernelModeTime) }`,
+    `Get-CimInstance Win32_Process | ForEach-Object {` +
+      ` $cmd = if ($_.CommandLine) { $_.CommandLine -replace '\\s+', ' ' } else { $_.Name };` +
+      ` $age = if ($_.CreationDate) { ($now - $_.CreationDate).TotalSeconds } else { 0 };` +
+      ` [string]::Format($c, '{0} {1} {2} {3} {4:F0} {5}', $_.ProcessId, $_.ParentProcessId,` +
+      ` $_.WorkingSetSize, $_.UserModeTime + $_.KernelModeTime, $age, $cmd) }`,
   ].join('; ')
 
 // Every process below `root`, leaving out `exclude` and what it started.

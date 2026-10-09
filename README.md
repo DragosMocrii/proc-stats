@@ -1,6 +1,6 @@
 # proc-stats
 
-A Claude Code mod that pins a status line with the session's own resource use:
+A Claude Code mod that pins a status line with the session's own resource use, and opens a task-manager pane of it on `/proc-stats`:
 
 ```
 mem 484MB · peak 530MB · cpu 2.4% · up 12m 4s
@@ -17,7 +17,25 @@ mem (484 + 215)MB · peak 530MB · cpu (2.4 + 98.7)% · up 12m 4s
 - **cpu**: share of one core since the last reading, as `top` shows it.
 - **up**: how long Claude Code has been running.
 
-It refreshes every 5 seconds (10 on Windows) and works on Linux (`/proc` and `ps`), macOS (`ps`) and Windows (PowerShell).
+## Processes pane
+
+`/proc-stats` opens a task-manager pane: Claude Code's own row, every process below it as a tree (PID, command, memory, CPU, how long it has run), and totals for its child processes and for everything together.
+
+```
+PID     COMMAND                                   MEM     CPU    TIME
+187782  Claude Code                             484MB    2.4%  12m 4s
+211146  └ bash -c timeout 15 python3 -c ...       4MB    0.0%     20s
+211147    └ python3 -c ...                      200MB   98.7%     20s
+
+        Child processes (2)                     204MB   98.7%
+        Total                                   688MB  101.1%
+```
+
+TIME, then PID, give way on a narrow pane.
+
+## Platforms
+
+Both views refresh every second on Linux, every 2 seconds on macOS and every 5 on Windows, and work on Linux (`/proc` and `ps`), macOS (`ps`) and Windows (PowerShell).
 
 ## Install
 
