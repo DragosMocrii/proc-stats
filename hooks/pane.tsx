@@ -2,6 +2,7 @@ import type { Elements, RenderSurface } from 'claude-code'
 
 import type { ProcRow, Reading, Snapshot } from '../types'
 import { formatBytes, formatDuration, formatPercent } from './format'
+import { treePrefixes } from './view'
 
 const PID_WIDTH = 7
 const NUMBER_WIDTH = 7
@@ -38,21 +39,6 @@ export type Line = {
   cpu: string
   time: string
   style: 'header' | 'own' | 'child' | 'total' | 'note'
-}
-
-// Tree lines for rows in tree order: `├ ` or `└ ` before each, and `│ ` under
-// every ancestor that has a sibling still to come.
-export const treePrefixes = (rows: { depth: number }[]) => {
-  const isLastAt: boolean[] = []
-
-  return rows.map(({ depth }, index) => {
-    const next = rows.slice(index + 1).find(row => row.depth <= depth)
-    const isLast = next === undefined || next.depth < depth
-    const prefix = isLastAt.slice(0, depth).map(last => (last ? '  ' : '│ ')).join('')
-    isLastAt[depth] = isLast
-
-    return `${prefix}${isLast ? '└' : '├'} `
-  })
 }
 
 const childLine = (row: ProcRow, prefix: string): Line => ({

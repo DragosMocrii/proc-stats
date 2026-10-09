@@ -53,6 +53,18 @@ export type ProcTrack = {
 // What the alerts remember between readings, and across reloads.
 export type AlertState = { levels: { mem: Level; cpu: Level }; tracks: Record<string, ProcTrack> }
 
+// How the pane orders its rows: the process tree, or flat by CPU, memory or runtime (highest first).
+export type SortMode = 'tree' | 'cpu' | 'mem' | 'time'
+
+// A chosen process: its pid and start, so a pid reused by another process is not it.
+export type Selected = { pid: number; startMs: number }
+
+// A stop in progress: confirm → sent → stuck (still listed after 3 s) → forced.
+export type StopState = Selected & { label: string; pids: number[]; phase: 'confirm' | 'sent' | 'stuck' | 'forced' }
+
+// The pane's own state, kept across reloads. `collapsed` holds the pids of collapsed rows.
+export type PaneState = { sort: SortMode; collapsed: number[]; selected: Selected | null; stop: StopState | null }
+
 declare module 'claude-code' {
   interface PluginState {
     // isOpen: whether the person has the pane open, so a reload can reopen it.

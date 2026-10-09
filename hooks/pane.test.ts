@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { engine, MB, proc } from './fixtures'
-import { paneColumns, paneLines, stripes, treePrefixes } from './pane'
+import { paneColumns, paneLines, stripes } from './pane'
 import { buildSnapshot, capRows } from './snapshot'
 import type { Timed } from './snapshot'
 
@@ -23,18 +23,6 @@ test('pane: Claude Code, its processes as a tree, then the totals', () => {
   ])
   expect(lines[2]!.command).toBe('└ cmd11')
   expect(lines[3]!.command).toBe('  └ python3 -c x')
-})
-
-test('tree lines: a branch per sibling, a rail under ancestors with more to come', () => {
-  const depths = [0, 1, 2, 1, 0, 1]
-  expect(treePrefixes(depths.map(depth => ({ depth })))).toEqual([
-    '├ ',
-    '│ ├ ',
-    '│ │ └ ',
-    '│ └ ',
-    '└ ',
-    '  └ ',
-  ])
 })
 
 test('zebra rows: every other process row, never the header or totals', () => {
