@@ -123,12 +123,15 @@ const readProcesses = (
   }
 }
 
-// What the pane's presses do. Built here because they call $, which pane.tsx never receives.
 // Sends the signal; a failure is the first line of what the command said, else null.
 const signal = async ($: EngineInterface, platform: string, pids: number[], isForce: boolean) => {
-  const { exitCode, stderr } = await $.process.run(killArgv(platform, pids, isForce))
+  try {
+    const { exitCode, stderr } = await $.process.run(killArgv(platform, pids, isForce))
 
-  return exitCode === 0 ? null : (stderr.trim().split('\n')[0] ?? `exit ${exitCode}`)
+    return exitCode === 0 ? null : stderr.trim().split('\n')[0] || `exit ${exitCode}`
+  } catch (error) {
+    return error instanceof Error ? error.message : 'the command could not start'
+  }
 }
 
 const setStop = ($: EngineInterface, stop: StopState | null) => update($, pane, state => ({ ...state, stop }))
@@ -147,6 +150,7 @@ const checkStop = async ($: EngineInterface) => {
   await setStop($, null)
 }
 
+// What the pane's presses do. Built here because they call $, which pane.tsx never receives.
 const paneHandlers = ($: EngineInterface): PaneHandlers => ({
   onRow: target =>
     void update($, pane, state => ({
@@ -160,6 +164,7 @@ const paneHandlers = ($: EngineInterface): PaneHandlers => ({
     void (async () => {
       const state = (await $.state.get(PANE_STATE)).value ?? EMPTY_PANE
       const snapshot = (await $.state.get(READING)).value?.snapshot
+      if (state.stop) return
       const pids = snapshot && state.selected ? stopTargets(snapshot, state.selected) : null
       const row = snapshot?.children?.find(each => isSelected(each, state.selected))
       if (!pids || !row) {
@@ -179,9 +184,9 @@ const paneHandlers = ($: EngineInterface): PaneHandlers => ({
         await setStop($, null)
         return
       }
+      await setStop($, { ...stop, pids, phase: 'sent' })
       const failure = await signal($, snapshot.platform, pids, false)
       if (failure) $.ui.toast(`proc-stats: ${failure}`)
-      await setStop($, { ...stop, pids, phase: 'sent' })
       $.clock.after(STOP_CHECK_MS, () => void checkStop($))
     })(),
   onForce: () =>
@@ -189,6 +194,10 @@ const paneHandlers = ($: EngineInterface): PaneHandlers => ({
       const stop = (await $.state.get(PANE_STATE)).value?.stop
       const snapshot = (await $.state.get(READING)).value?.snapshot
       if (!stop || stop.phase !== 'stuck' || !snapshot) return
+      if (!snapshot.children) {
+        $.ui.toast('proc-stats: the process list is unavailable; try again')
+        return
+      }
       const current = stopTargets(snapshot, stop)
       const pids = current ? stop.pids.filter(pid => current.includes(pid)) : []
       if (pids.length === 0) {
@@ -196,9 +205,9 @@ const paneHandlers = ($: EngineInterface): PaneHandlers => ({
         await setStop($, null)
         return
       }
+      await setStop($, { ...stop, pids, phase: 'forced' })
       const failure = await signal($, snapshot.platform, pids, true)
       if (failure) $.ui.toast(`proc-stats: ${failure}`)
-      await setStop($, { ...stop, phase: 'forced' })
       $.clock.after(STOP_CHECK_MS, () => void checkStop($))
     })(),
   onCancel: () => void setStop($, null),
@@ -294,6 +303,9 @@ export const register: Register = (on, options) => {
       description: 'Show Claude Code and the processes it started in a task-manager pane',
     })
     void startSampling($, settings)
+    // A reload drops the check timer of a stop already signalled; schedule it again.
+    const phase = (await $.state.get(PANE_STATE)).value?.stop?.phase
+    if (phase === 'sent' || phase === 'forced') $.clock.after(STOP_CHECK_MS, () => void checkStop($))
     // A reload closes the pane (an unload no hook hears); put it back if it was open.
     if (await read($, isOpen)) void $.ui.open(OPEN).catch(() => undefined)
 

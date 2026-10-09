@@ -122,3 +122,56 @@ test('k asks before stopping; n cancels; Claude Code offers no stop', async ($, 
   expect(await ui.find({ key: 'stop' })).toBeDefined()
   await ui.unmount()
 })
+
+test('y signals once, even pressed twice', async ($, on) => {
+  const calls: (readonly string[])[] = []
+  on('state.get', { plugin: 'proc-stats', key: 'reading' }, () => ({ value: { value: { snapshot }, version: 1 } }))
+  // Answers without calling next: nothing real runs.
+  on('process.run', (_$, e) => {
+    calls.push(e.argv)
+
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  const ui = await $.ui.mount({
+    plugin: 'proc-stats',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'proc-stats',
+    props: { ...PANE_PROPS, bodyColumns: 80 },
+  })
+  await ui.press({ key: 'pid:12' })
+  await ui.press({ key: 'stop' })
+  await ui.press({ key: 'confirm' })
+  expect(calls).toEqual([['kill', '-TERM', '12']])
+  expect(await ui.find({ type: 'Text', text: /Stopping/ })).toBeDefined()
+  if (await ui.find({ key: 'confirm' })) await ui.press({ key: 'confirm' })
+  expect(calls).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('a pid reused between k and y stops nothing and clears the stop', async ($, on) => {
+  const calls: (readonly string[])[] = []
+  let current = snapshot
+  on('state.get', { plugin: 'proc-stats', key: 'reading' }, () => ({ value: { value: { snapshot: current }, version: 1 } }))
+  on('process.run', (_$, e) => {
+    calls.push(e.argv)
+
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  const ui = await $.ui.mount({
+    plugin: 'proc-stats',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'proc-stats',
+    props: { ...PANE_PROPS, bodyColumns: 80 },
+  })
+  await ui.press({ key: 'pid:12' })
+  await ui.press({ key: 'stop' })
+  expect(await ui.find({ key: 'confirm' })).toBeDefined()
+  current = buildSnapshot('linux', 10, { ...now, wallMs: now.wallMs + 60_000 }, before)
+  await ui.press({ key: 'confirm' })
+  expect(calls).toEqual([])
+  expect(await ui.find({ key: 'confirm' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Stopping/ })).toBeUndefined()
+  await ui.unmount()
+})
