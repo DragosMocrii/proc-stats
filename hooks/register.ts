@@ -1,7 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Reading } from '../types'
+import type { History, Reading } from '../types'
+import { historyCapacity, pointOf, pushPoint } from './history'
 import { drawPane } from './pane'
 import { buildSnapshot, capRows } from './snapshot'
 import type { Timed } from './snapshot'
@@ -18,6 +19,7 @@ const COMMAND = 'proc-stats'
 
 const reading = atom({ plugin: 'proc-stats', key: 'reading' } as const, {} as Reading)
 const isOpen = atom({ plugin: 'proc-stats', key: 'isOpen' } as const, false)
+const history = atom({ plugin: 'proc-stats', key: 'history' } as const, { points: [] } as History)
 const OPEN = { id: PANE, title: 'Processes' }
 
 const detectPlatform = async ($: EngineInterface): Promise<Platform> => {
@@ -116,6 +118,7 @@ const startSampling = async ($: EngineInterface, settings: Settings) => {
   try {
     const platform = await detectPlatform($)
     const pid = await enginePid($, platform)
+    const capacity = historyCapacity(settings.historyMinutes, settings.intervalMs[platform])
     let before: Timed | undefined
     let isBusy = false
 
@@ -129,6 +132,8 @@ const startSampling = async ($: EngineInterface, settings: Settings) => {
         const snapshot = buildSnapshot(platform, pid, now, before)
         $.ui.status(statusLine(snapshot, settings.statusShowChildren))
         await set({ snapshot: capRows(snapshot) })
+        const point = pointOf(snapshot, now.wallMs)
+        if (point) await update($, history, kept => pushPoint(kept, point, capacity))
         before = now
       } catch {
         const error = `cannot read process ${pid} on ${platform}`

@@ -25,9 +25,16 @@ export type Snapshot = {
 
 export type Reading = { snapshot?: Snapshot; error?: string }
 
+// One reading's session totals: Claude Code with every process it started.
+export type Point = { t: number; memKb: number; cpuPct: number }
+
+// The newest points, oldest first; as many as the history window needs.
+export type History = { points: Point[] }
+
 declare module 'claude-code' {
   interface PluginState {
     // isOpen: whether the person has the pane open, so a reload can reopen it.
-    'proc-stats': { reading: Reading; isOpen: boolean }
+    // history: the session totals over the last historyMinutes, for alerts and sparklines.
+    'proc-stats': { reading: Reading; isOpen: boolean; history: History }
   }
 }
