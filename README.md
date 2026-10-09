@@ -33,6 +33,10 @@ mem (484 + 215)MB · peak 530MB · cpu (2.4 + 98.7)% · up 12m 4s
 
 TIME, then PID, give way on a narrow pane.
 
+## Report
+
+`/proc-stats report` writes a summary of the session into the conversation, where Claude reads it too: the platform and how long Claude Code has run; the memory and CPU of Claude Code, its child processes and both together now; the highest memory and CPU of the history window and how long ago they were; the five processes using the most memory, with what started them; the marker level; and the last five alerts.
+
 ## Platforms
 
 By default both views refresh every second on Linux, every 2 seconds on macOS and every 5 on Windows (configurable in Settings), and work on Linux (`/proc` and `ps`), macOS (`ps`) and Windows (PowerShell).

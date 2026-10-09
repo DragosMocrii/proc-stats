@@ -9,6 +9,7 @@ import { drawPane } from './pane'
 import type { PaneHandlers } from './pane'
 import { buildSnapshot, capRows } from './snapshot'
 import type { Timed } from './snapshot'
+import { reportText } from './report'
 import { readSettings } from './settings'
 import type { Settings } from './settings'
 import { statusLine } from './status'
@@ -51,6 +52,7 @@ const origins = atom(ORIGINS, EMPTY_ORIGINS as Origins)
 // Long enough to read a process name and its numbers.
 const TOAST_MS = 8000
 const OPEN = { id: PANE, title: 'Processes' }
+const USAGE = '/proc-stats opens the Processes pane; /proc-stats report summarizes the session here.'
 
 const detectPlatform = async ($: EngineInterface): Promise<Platform> => {
   if ((await $.env.get('OS')) === 'Windows_NT') return 'windows'
@@ -490,6 +492,17 @@ const traceCall = async <E extends { tool_use_id: string; command?: unknown; age
   }
 }
 
+// The report from current state, as the person and the model read it.
+const report = async ($: EngineInterface, historyMinutes: number) =>
+  reportText({
+    reading: await read($, reading),
+    points: (await read($, history)).points,
+    alerts: await read($, alerts),
+    origins: await read($, origins),
+    now: await $.clock.now(),
+    historyMinutes,
+  })
+
 // A settings change reloads the module, so they are read once per load.
 export const register: Register = (on, options) => {
   const settings = readSettings(options)
@@ -498,7 +511,8 @@ export const register: Register = (on, options) => {
     const started = await next(e)
     await $.command.register({
       name: COMMAND,
-      description: 'Show Claude Code and the processes it started in a task-manager pane',
+      description: 'Show Claude Code and the processes it started in a task-manager pane, or a report',
+      argumentHint: '[report]',
     })
     void startSampling($, settings)
     // A reload drops the check timer of a stop already signalled; schedule it again.
@@ -528,7 +542,17 @@ export const register: Register = (on, options) => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  on('command.run', { command: COMMAND }, async $ => {
+  // Bare: the pane. `report`: the report as the command's output. Anything else: how to use it.
+  on('command.run', { command: COMMAND }, async ($, e) => {
+    const typed = e.args.trim()
+    if (typed.toLowerCase() === 'report') {
+      try {
+        return { text: await report($, settings.historyMinutes) }
+      } catch {
+        return { text: 'proc-stats: the report could not be made; try again.' }
+      }
+    }
+    if (typed !== '') return { text: `proc-stats: unknown argument "${typed}". ${USAGE}` }
     const opened = await $.ui.open({ ...OPEN, focus: true })
     await update($, isOpen, () => true)
 
