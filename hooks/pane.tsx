@@ -1,7 +1,7 @@
 import type { Elements, RenderSurface } from 'claude-code'
 
 import type { Origins, PaneState, Point, Reading } from '../types'
-import { originLabel, originOf } from './origin'
+import { originText } from './origin'
 import { formatBytes, formatDuration, formatPercent } from './format'
 import { sparkLines } from './sparkline'
 import { confirmText } from './stop'
@@ -135,10 +135,7 @@ export const drawPane = (
     row(
       `pid:${view.row.pid}`,
       { pid: view.row.pid, startMs: view.row.startMs, hasChildren: view.hasChildren && state.sort === 'tree' },
-      commandCell(view, commandWidth, (() => {
-        const origin = originOf(origins, view.row)
-        return origin ? originLabel(origin) : undefined
-      })()),
+      commandCell(view, commandWidth, originText(origins, view.row)),
       numbers(formatBytes(view.rssKb), formatPercent(view.cpuPercent), formatDuration(view.row.uptimeSeconds)),
       String(view.row.pid),
       index % 2 === 0,
