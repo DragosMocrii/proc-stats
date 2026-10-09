@@ -70,6 +70,7 @@ export const buildSnapshot = (
           rssKb: proc.rssKb,
           cpuPercent: cpu ? cpu.percent : null,
           uptimeSeconds: proc.uptimeSeconds,
+          startMs: Math.round(now.wallMs - proc.uptimeSeconds * 1000),
         }
       })
     : null

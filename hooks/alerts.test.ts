@@ -87,6 +87,7 @@ const row = (pid: number, extra: Partial<ProcRow> = {}): ProcRow => ({
   rssKb: 10 * MB,
   cpuPercent: 0,
   uptimeSeconds: 100,
+  startMs: 0,
   ...extra,
 })
 

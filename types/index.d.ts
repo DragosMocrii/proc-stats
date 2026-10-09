@@ -9,6 +9,8 @@ export type ProcRow = {
   // Null on the first reading, which has nothing to measure from.
   cpuPercent: number | null
   uptimeSeconds: number
+  // When it started, in ms since the epoch: the reading's time less its runtime, so it can move by a second between readings.
+  startMs: number
 }
 
 export type Snapshot = {
