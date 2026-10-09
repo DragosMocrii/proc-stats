@@ -7,7 +7,7 @@ import { engine, MB, proc, statLine } from './fixtures'
 import { commandCell, paneColumns } from './pane'
 import { buildSnapshot } from './snapshot'
 import type { Timed } from './snapshot'
-import { EMPTY_PANE, viewRows } from './view'
+import { EMPTY_PANE, fit, viewRows } from './view'
 
 const before: Timed = { engine, children: [proc(11, 10), proc(12, 11)], wallMs: 0 }
 const now: Timed = {
@@ -421,4 +421,11 @@ test('the pane draws the memory and CPU history above the table, once there is s
   expect(await drawn.find({ type: 'Text', text: /^mem ▁█ +1\.00GB max +1\.00GB$/ })).toBeDefined()
   expect(await drawn.find({ type: 'Text', text: /^cpu ▃█ +200\.0% max +200\.0%$/ })).toBeDefined()
   await drawn.unmount()
+})
+
+test('a command row names its origin; sorted views add the parent after it', () => {
+  const view = viewRows(snapshot, state())[0]!
+  expect(commandCell(view, 30, 'Bash')).toEqual({ main: fit('└ ▾ cmd11', 23), parent: ' · Bash' })
+  const sorted = viewRows(snapshot, state({ sort: 'mem' }))[0]!
+  expect(commandCell(sorted, 30, 'Monitor').parent).toBe(fit(' · Monitor ← cmd11', 10))
 })

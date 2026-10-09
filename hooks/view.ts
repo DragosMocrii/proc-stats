@@ -1,7 +1,8 @@
 // The pane's rows as text: labels, cells, tree or sorted order, collapsing, selection and details.
 
-import type { PaneState, ProcRow, Selected, Snapshot, SortMode } from '../types'
+import type { Origins, PaneState, ProcRow, Selected, Snapshot, SortMode } from '../types'
 import { formatBytes, formatDuration, formatPercent } from './format'
+import { originDetail, originOf } from './origin'
 
 export const EMPTY_PANE: PaneState = { sort: 'tree', collapsed: [], selected: null, stop: null }
 
@@ -178,7 +179,7 @@ const clockTime = (ms: number) => {
 }
 
 // The selected row's full command, then its facts; null with nothing (listed) selected.
-export const detailLines = (snapshot: Snapshot, selected: Selected | null): string[] | null => {
+export const detailLines = (snapshot: Snapshot, selected: Selected | null, origins?: Origins): string[] | null => {
   if (selected === null) return null
   const { engine } = snapshot
   if (selected.pid === snapshot.pid) {
@@ -191,10 +192,15 @@ export const detailLines = (snapshot: Snapshot, selected: Selected | null): stri
   if (!row) return null
   const parent = row.ppid === snapshot.pid ? 'Claude Code' : labelIn(rows, row.ppid)
 
-  return [
+  const lines = [
     oneLine(row.command),
     `pid ${row.pid} · parent ${row.ppid} (${parent}) · started ${clockTime(row.startMs)} · ${formatBytes(row.rssKb)} · ${formatPercent(row.cpuPercent)} · up ${formatDuration(row.uptimeSeconds)}`,
   ]
+  const origin = origins ? originOf(origins, row) : null
+  if (origin) return [...lines, originDetail(origin)]
+  if (origins && unwrapCommand(row.command) !== null) return [...lines, 'origin unknown']
+
+  return lines
 }
 
 export type TotalLine = { label: string; mem: string; cpu: string }

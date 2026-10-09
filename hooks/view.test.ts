@@ -189,3 +189,11 @@ test('a collapsed row whose subtree runs to the end of the list', () => {
   expect(rows[1]?.rssKb).toBe(254 * MB)
   expect(rows[1]?.cpuPercent).toBe(70)
 })
+
+test('details say who started a Bash command, or that it is unknown', () => {
+  const snapshot = buildSnapshot('linux', 10, { engine, children: [proc(11, 10, { command: wrap('npm test'), uptimeSeconds: 5 }), proc(12, 10, { command: 'sleep 9', uptimeSeconds: 5 })], wallMs: 100_000 }, undefined)
+  const origins = { calls: [], byPid: { 11: { tool: 'Bash', agent: null, startMs: 95_000 } } }
+  expect(detailLines(snapshot, { pid: 11, startMs: 95_000 }, origins)?.[2]).toBe('started by Bash in the main conversation')
+  expect(detailLines(snapshot, { pid: 11, startMs: 95_000 }, { calls: [], byPid: {} })?.[2]).toBe('origin unknown')
+  expect(detailLines(snapshot, { pid: 12, startMs: 95_000 }, origins)?.length).toBe(2)
+})

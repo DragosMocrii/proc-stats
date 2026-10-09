@@ -1,6 +1,7 @@
 import type { Elements, RenderSurface } from 'claude-code'
 
-import type { PaneState, Point, Reading } from '../types'
+import type { Origins, PaneState, Point, Reading } from '../types'
+import { originLabel, originOf } from './origin'
 import { formatBytes, formatDuration, formatPercent } from './format'
 import { sparkLines } from './sparkline'
 import { confirmText } from './stop'
@@ -49,11 +50,12 @@ export type PaneHandlers = {
 
 const marker = (view: ViewRow) => (view.hasChildren ? (view.isCollapsed ? '▸ ' : '▾ ') : '')
 
-// The command cell: tree lines, the collapse marker and the label; in sorted views the parent after it.
-export const commandCell = (view: ViewRow, width: number) => {
+// The command cell: tree lines, the collapse marker and the label; then, dim, its origin and
+// (in sorted views) its parent, given at most a third of the width.
+export const commandCell = (view: ViewRow, width: number, origin?: string) => {
   const main = `${view.prefix}${marker(view)}${view.label}`
-  if (view.parent === null) return { main: fit(main, width), parent: '' }
-  const tail = ` ← ${view.parent}`
+  const tail = `${origin ? ` · ${origin}` : ''}${view.parent !== null ? ` ← ${view.parent}` : ''}`
+  if (tail === '') return { main: fit(main, width), parent: '' }
   const tailWidth = Math.min(Array.from(tail).length, Math.floor(width / 3))
 
   return { main: fit(main, width - tailWidth), parent: fit(tail, tailWidth) }
@@ -64,6 +66,7 @@ export const drawPane = (
   { snapshot, error }: Reading,
   state: PaneState,
   points: Point[],
+  origins: Origins,
   bodyColumns: number,
   handlers: PaneHandlers,
 ) => {
@@ -132,7 +135,10 @@ export const drawPane = (
     row(
       `pid:${view.row.pid}`,
       { pid: view.row.pid, startMs: view.row.startMs, hasChildren: view.hasChildren && state.sort === 'tree' },
-      commandCell(view, commandWidth),
+      commandCell(view, commandWidth, (() => {
+        const origin = originOf(origins, view.row)
+        return origin ? originLabel(origin) : undefined
+      })()),
       numbers(formatBytes(view.rssKb), formatPercent(view.cpuPercent), formatDuration(view.row.uptimeSeconds)),
       String(view.row.pid),
       index % 2 === 0,
@@ -141,7 +147,7 @@ export const drawPane = (
   )
   const note = noteLine(snapshot)
   const totals = totalLines(snapshot)
-  const details = detailLines(snapshot, state.selected)
+  const details = detailLines(snapshot, state.selected, origins)
   const stop = state.stop
   const canStop =
     handlers.onStop !== undefined &&
