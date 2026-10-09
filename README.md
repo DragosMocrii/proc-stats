@@ -45,7 +45,7 @@ In Claude Code's config menu (`/config`), under proc-stats:
 |---|---|---|
 | Refresh on Linux / macOS / Windows (ms) | 1000 / 2000 / 5000 | how often processes are read; 250-60000 on Linux and macOS, 1000-60000 on Windows |
 | Memory warning / alert (MB) | 2048 / 4096 | 🟡 / 🔴 on the status line (session total); a warning above its alert is lowered to the alert; limits are at least 1 |
-| CPU warning / alert (%) | 150 / 300 | the same for CPU, averaged over 10 s |
+| CPU warning / alert (%) | 150 / 300 | the same for CPU, averaged over the last 10 s (two refreshes when the refresh is slower) |
 | Busy process CPU (%) / time (s) | 90 / 60 | a toast for one child process |
 | Large process memory (MB) | 1024 | a toast for one child process |
 | History (minutes) | 10 | the pane's sparklines; 1-120 minutes |
@@ -57,7 +57,7 @@ A value out of range is ignored and its default used.
 
 ## Alerts
 
-- **Status line:** 🟡 at the start of the line when the session (Claude Code and every process it started) uses more memory than the warning limit, or more CPU on average over the last 10 seconds; 🔴 above the alert limit. A marker clears only once its value is 10% below the limit, so it does not flicker.
+- **Status line:** 🟡 at the start of the line when the session (Claude Code and every process it started) uses more memory than the warning limit, or more CPU on average over the last 10 seconds (two refreshes when the refresh is slower); 🔴 above the alert limit. A marker clears only once its value is 10% below the limit, so it does not flicker.
 - **Toasts:** one when a child process stays above the busy-process CPU limit for the set time (short dips are tolerated), and one when it grows past the large-process memory limit. Each fires once per process, and again only after the process has been 10 seconds below 90% of the limit. Several at once become one toast.
 
 ## Install

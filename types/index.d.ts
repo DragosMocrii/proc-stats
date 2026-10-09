@@ -36,8 +36,9 @@ export type Level = 'none' | 'warn' | 'alert'
 
 // One child process's toast tracking. Times are milliseconds since the epoch.
 export type ProcTrack = {
-  // How long it had run at the last reading; a younger process under the same pid is a new one.
-  uptimeSeconds: number
+  // When the process started (now minus its uptime at the first reading); a start more than
+  // 2 s later under the same pid is a new process.
+  startMs: number
   // When its CPU went over the toast limit (kept through dips above 90% of it).
   cpuSince: number | null
   cpuFired: boolean

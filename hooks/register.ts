@@ -161,8 +161,9 @@ const startSampling = async ($: EngineInterface, settings: Settings) => {
         let marker = ''
         try {
           const previous = (await $.state.get(ALERTS)).value ?? EMPTY_ALERTS
-          const step = stepAlerts(previous, snapshot, points, now.wallMs, settings)
-          await update($, alerts, () => step.state)
+          const step = stepAlerts(previous, snapshot, points, now.wallMs, settings, settings.intervalMs[platform])
+          // Written only when it changed: an idle session leaves the state alone.
+          if (JSON.stringify(step.state) !== JSON.stringify(previous)) await update($, alerts, () => step.state)
           marker = markerFor(worse(step.state.levels.mem, step.state.levels.cpu))
           if (step.toast) $.ui.toast(step.toast, { timeoutMs: TOAST_MS })
         } catch {

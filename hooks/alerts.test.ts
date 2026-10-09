@@ -44,28 +44,39 @@ test('the worse level, and its marker', () => {
 })
 
 test('a CPU average needs two points spanning half the window', () => {
-  expect(cpuAverage(cpuPoints(0, 10_000, 1000, 100), 10_000)).toBe(100)
-  expect(cpuAverage(cpuPoints(5000, 10_000, 5000, 200), 10_000)).toBe(200)
-  expect(cpuAverage(cpuPoints(9000, 10_000, 1000, 100), 10_000)).toBeNull()
-  expect(cpuAverage([{ t: 10_000, memKb: 0, cpuPct: 500 }], 10_000)).toBeNull()
-  expect(cpuAverage([], 10_000)).toBeNull()
+  expect(cpuAverage(cpuPoints(0, 10_000, 1000, 100), 10_000, 1000)).toBe(100)
+  expect(cpuAverage(cpuPoints(5000, 10_000, 5000, 200), 10_000, 1000)).toBe(200)
+  expect(cpuAverage(cpuPoints(9000, 10_000, 1000, 100), 10_000, 1000)).toBeNull()
+  expect(cpuAverage([{ t: 10_000, memKb: 0, cpuPct: 500 }], 10_000, 1000)).toBeNull()
+  expect(cpuAverage([], 10_000, 1000)).toBeNull()
   // Points older than the window do not count toward it.
-  expect(cpuAverage([...cpuPoints(0, 2000, 1000, 900), ...cpuPoints(12_000, 13_000, 1000, 100)], 13_000)).toBeNull()
+  // A slower refresh widens the window to two refreshes.
+  expect(cpuAverage(cpuPoints(0, 30_000, 15_000, 120), 30_000, 15_000)).toBe(120)
+  expect(cpuAverage([{ t: 20_000, memKb: 0, cpuPct: 1 }, { t: 30_000, memKb: 0, cpuPct: 1 }], 30_000, 15_000)).toBeNull()
+  expect(cpuAverage(cpuPoints(0, 30_000, 15_000, 120), 30_000, 1000)).toBeNull()
+  expect(cpuAverage([...cpuPoints(0, 2000, 1000, 900), ...cpuPoints(12_000, 13_000, 1000, 100)], 13_000, 1000)).toBeNull()
 })
 
 test('session levels: memory from the current total, CPU from the average', () => {
-  const levels = sessionLevels(snapshot(1000, 1100), cpuPoints(0, 10_000, 1000, 350), 10_000, DEFAULTS, EMPTY_ALERTS.levels)
+  const levels = sessionLevels(snapshot(1000, 1100), cpuPoints(0, 10_000, 1000, 350), 10_000, DEFAULTS, EMPTY_ALERTS.levels, 1000)
   expect(levels).toEqual({ mem: 'warn', cpu: 'alert' })
 })
 
 test('without a CPU average the CPU level stays where it was', () => {
   const previous = { mem: 'none' as const, cpu: 'warn' as const }
-  expect(sessionLevels(snapshot(100, 0), [], 10_000, DEFAULTS, previous)).toEqual({ mem: 'none', cpu: 'warn' })
+  expect(sessionLevels(snapshot(100, 0), [], 10_000, DEFAULTS, previous, 1000)).toEqual({ mem: 'none', cpu: 'warn' })
 })
 
 test('an unreadable process table: memory from Claude Code alone', () => {
   const unknown = snapshot(3000, 0, { children: null, childCpuPercent: null })
-  expect(sessionLevels(unknown, [], 10_000, DEFAULTS, EMPTY_ALERTS.levels).mem).toBe('warn')
+  expect(sessionLevels(unknown, [], 10_000, DEFAULTS, EMPTY_ALERTS.levels, 1000).mem).toBe('warn')
+})
+
+test('an unreadable process table: memory may rise, never fall', () => {
+  const unknown = (engineMb: number) => snapshot(engineMb, 0, { children: null, childCpuPercent: null })
+  const held = sessionLevels(unknown(1000), [], 10_000, DEFAULTS, { mem: 'alert', cpu: 'none' }, 1000)
+  expect(held.mem).toBe('alert')
+  expect(sessionLevels(unknown(3000), [], 10_000, DEFAULTS, EMPTY_ALERTS.levels, 1000).mem).toBe('warn')
 })
 
 const row = (pid: number, extra: Partial<ProcRow> = {}): ProcRow => ({
@@ -112,25 +123,47 @@ test('CPU: once per process, again only after 10 s below 90% of the limit', () =
   ).toEqual([[], ['cpu'], [], [], [], [], ['cpu']])
 })
 
+const track = (extra: Partial<ProcTrack> = {}): ProcTrack => ({
+  startMs: 0,
+  cpuSince: 0,
+  cpuFired: true,
+  cpuCoolSince: null,
+  memFired: true,
+  memCoolSince: null,
+  ...extra,
+})
+
 test('a reused pid is a new process: fresh tracker', () => {
-  const old: ProcTrack = {
-    uptimeSeconds: 500,
-    cpuSince: 0,
-    cpuFired: true,
-    cpuCoolSince: null,
-    memFired: true,
-    memCoolSince: null,
-  }
-  const { tracks, fired } = trackProcesses({ 5: old }, [row(5, { uptimeSeconds: 2, cpuPercent: 100 })], 1000, DEFAULTS)
+  // Tracked start 0; this row started at 5000 - 2000 = 3000, more than 2 s later.
+  const { tracks, fired } = trackProcesses({ 5: track() }, [row(5, { uptimeSeconds: 2, cpuPercent: 100 })], 5000, DEFAULTS)
   expect(fired).toEqual([])
-  expect(tracks['5']).toEqual({
-    uptimeSeconds: 2,
-    cpuSince: 1000,
-    cpuFired: false,
-    cpuCoolSince: null,
-    memFired: false,
-    memCoolSince: null,
-  })
+  expect(tracks['5']).toEqual({ startMs: 3000, cpuSince: 5000, cpuFired: false, cpuCoolSince: null, memFired: false, memCoolSince: null })
+})
+
+test('a start within 2 s of the tracked one is the same process, start unchanged', () => {
+  // uptime 4 s at now 5000 is a start of 1000; the tracked start stays 0.
+  const { tracks } = trackProcesses({ 5: track() }, [row(5, { uptimeSeconds: 4, cpuPercent: 0 })], 5000, DEFAULTS)
+  expect(tracks['5']?.startMs).toBe(0)
+  expect(tracks['5']?.cpuFired).toBe(true)
+})
+
+test('an idle process has identical trackers between readings', () => {
+  const first = trackProcesses({}, [row(5, { uptimeSeconds: 100 })], 100_000, DEFAULTS)
+  const second = trackProcesses(first.tracks, [row(5, { uptimeSeconds: 101 })], 101_000, DEFAULTS)
+  expect(second.tracks).toEqual(first.tracks)
+})
+
+test('a tracker from the older shape (no startMs) is replaced by a fresh one', () => {
+  const old = { uptimeSeconds: 500, cpuSince: 0, cpuFired: true, cpuCoolSince: null, memFired: true, memCoolSince: null } as unknown as ProcTrack
+  const { tracks } = trackProcesses({ 5: old }, [row(5, { uptimeSeconds: 600 })], 1000, DEFAULTS)
+  expect(tracks['5']).toEqual({ startMs: -599_000, cpuSince: null, cpuFired: false, cpuCoolSince: null, memFired: false, memCoolSince: null })
+})
+
+test('a CPU reading that is null still checks memory and leaves the CPU timer', () => {
+  const timer = track({ cpuSince: 500, cpuFired: false, memFired: false })
+  const { tracks, fired } = trackProcesses({ 6: timer }, [row(6, { cpuPercent: null, rssKb: 2000 * MB, uptimeSeconds: 1 })], 1000, DEFAULTS)
+  expect(fired.map(entry => entry.kind)).toEqual(['mem'])
+  expect(tracks['6']?.cpuSince).toBe(500)
 })
 
 test('memory: once on passing the limit, again after 10 s below 90% of it', () => {
@@ -156,8 +189,8 @@ test('ended processes leave the tracker', () => {
 })
 
 test('toast text: one, several, and a long command', () => {
-  const cpu = { kind: 'cpu' as const, pid: 5, command: 'cmd5', cpuPercent: 99.6, seconds: 60, limitKb: 0 }
-  const mem = { kind: 'mem' as const, pid: 6, command: 'cmd6', cpuPercent: 0, seconds: 0, limitKb: 1024 * MB }
+  const cpu = { kind: 'cpu' as const, pid: 5, command: 'cmd5', cpuPercent: 99.6, seconds: 60, limitKb: 0, limitPct: 90 }
+  const mem = { kind: 'mem' as const, pid: 6, command: 'cmd6', cpuPercent: 0, seconds: 0, limitKb: 1024 * MB, limitPct: 0 }
   expect(toastText([])).toBeNull()
   expect(toastText([cpu])).toBe('cmd5 has used ~100% CPU for 1m 0s · pid 5 · /proc-stats')
   expect(toastText([mem])).toBe('cmd6 grew past 1.00GB · pid 6 · /proc-stats')
@@ -169,24 +202,34 @@ test('toast text: one, several, and a long command', () => {
   expect(toastText([{ ...cpu, command: long }])).toBe(`${'x'.repeat(39)}… has used ~100% CPU for 1m 0s · pid 5 · /proc-stats`)
 })
 
+test('toast text: one line, whole code points, and a CPU figure never below the limit', () => {
+  const cpu = { kind: 'cpu' as const, pid: 5, command: 'cmd5', cpuPercent: 85, seconds: 60, limitKb: 0, limitPct: 90 }
+  expect(toastText([cpu])).toContain('~90%')
+  expect(toastText([{ ...cpu, command: 'node  a\n  b' }])).toBe('node a b has used ~90% CPU for 1m 0s · pid 5 · /proc-stats')
+  const emoji = `${'x'.repeat(38)}😀😀tail`
+  const text = toastText([{ ...cpu, command: emoji }]) ?? ''
+  expect(text.includes('\uFFFD')).toBe(false)
+  expect(text.startsWith(`${'x'.repeat(38)}😀… has`)).toBe(true)
+})
+
 test('stepAlerts: the first reading and an unreadable table never toast, and keep the trackers', () => {
-  const fired: ProcTrack = { uptimeSeconds: 100, cpuSince: null, cpuFired: false, cpuCoolSince: null, memFired: false, memCoolSince: null }
+  const fired: ProcTrack = { startMs: 0, cpuSince: null, cpuFired: false, cpuCoolSince: null, memFired: false, memCoolSince: null }
   const state = { levels: EMPTY_ALERTS.levels, tracks: { 6: fired } }
   const big = [row(6, { rssKb: 2000 * MB })]
   // childKb 0 keeps the memory level at none, so the assertion is about toasts and trackers.
   const first = snapshot(100, 0, { children: big, childCount: 1, engine: { rssKb: 100 * MB, peakKb: 100 * MB, cpuPercent: null, uptimeSeconds: 1 } })
-  expect(stepAlerts(state, first, [], 1000, DEFAULTS)).toEqual({ state, toast: null })
+  expect(stepAlerts(state, first, [], 1000, DEFAULTS, 1000)).toEqual({ state, toast: null })
   const unknown = snapshot(100, 0, { children: null, childCpuPercent: null })
-  expect(stepAlerts(state, unknown, [], 1000, DEFAULTS).toast).toBeNull()
-  expect(stepAlerts(state, unknown, [], 1000, DEFAULTS).state.tracks).toEqual(state.tracks)
+  expect(stepAlerts(state, unknown, [], 1000, DEFAULTS, 1000).toast).toBeNull()
+  expect(stepAlerts(state, unknown, [], 1000, DEFAULTS, 1000).state.tracks).toEqual(state.tracks)
 })
 
 test('stepAlerts: a toast once, and not again after a reload restores the state', () => {
   const big = snapshot(100, 2000, { children: [row(6, { rssKb: 2000 * MB })], childCount: 1 })
-  const once = stepAlerts(EMPTY_ALERTS, big, [], 1000, DEFAULTS)
+  const once = stepAlerts(EMPTY_ALERTS, big, [], 1000, DEFAULTS, 1000)
   expect(once.toast).toBe('cmd6 grew past 1.00GB · pid 6 · /proc-stats')
   // The state round-trips through $.state as plain data.
   const restored = JSON.parse(JSON.stringify(once.state))
-  expect(stepAlerts(restored, big, [], 2000, DEFAULTS).toast).toBeNull()
+  expect(stepAlerts(restored, big, [], 2000, DEFAULTS, 1000).toast).toBeNull()
   expect(once.state.levels.mem).toBe('warn')
 })
