@@ -6,20 +6,10 @@ import { drawPane } from './pane'
 import { buildSnapshot, capRows } from './snapshot'
 import type { Timed } from './snapshot'
 import { statusLine } from './status'
-import {
-  descendants,
-  isComplete,
-  parseCmdline,
-  parseMacFields,
-  parseProcStat,
-  parseProcStatus,
-  parsePowerShell,
-  parsePsTable,
-  powerShellSample,
-  toRow,
-  windowsProc,
-} from './stats'
-import type { Platform, Proc, Sample } from './stats'
+import { childPids, linuxEngine, linuxProc, macReading, windowsReading } from './sampler'
+import type { Gathered } from './sampler'
+import { isComplete, parsePsTable, powerShellSample } from './stats'
+import type { Platform, Proc } from './stats'
 
 const PANE = 'proc-stats'
 const COMMAND = 'proc-stats'
@@ -61,7 +51,7 @@ const psTable = async ($: EngineInterface, columns: string) => {
   return parsePsTable(stdout)
 }
 
-const linuxProc = async ($: EngineInterface, pid: number, uptime: string): Promise<Proc | undefined> => {
+const readLinuxChild = async ($: EngineInterface, pid: number, uptime: string): Promise<Proc | undefined> => {
   try {
     const [status, stat, cmdline] = await Promise.all([
       $.fs.read(`/proc/${pid}/status`),
@@ -69,35 +59,24 @@ const linuxProc = async ($: EngineInterface, pid: number, uptime: string): Promi
       // Its own failure only costs the arguments: the name from stat stands in.
       $.fs.read(`/proc/${pid}/cmdline`).catch(() => ''),
     ])
-    // A zombie has no VmRSS and no command line.
-    const { rssKb } = parseProcStatus(status)
-    const { name, ...rest } = parseProcStat(stat, uptime)
 
-    return {
-      pid,
-      ...rest,
-      rssKb: Number.isFinite(rssKb) ? rssKb : 0,
-      command: parseCmdline(cmdline) || name,
-    }
+    return linuxProc(pid, status, stat, cmdline, uptime)
   } catch {
     // Ended since the table was read.
     return undefined
   }
 }
 
-const readLinux = async ($: EngineInterface, pid: number) => {
+const readLinux = async ($: EngineInterface, pid: number): Promise<Gathered> => {
   const [status, stat, uptime] = await Promise.all([
     $.fs.read(`/proc/${pid}/status`),
     $.fs.read(`/proc/${pid}/stat`),
     $.fs.read('/proc/uptime'),
   ])
-  const { rssKb, peakKb } = parseProcStatus(status)
-  const { cpuSeconds, uptimeSeconds } = parseProcStat(stat, uptime)
-  const engine = { rssKb, peakKb, cpuSeconds, uptimeSeconds }
+  const engine = linuxEngine(status, stat, uptime)
   try {
-    const { selfPid, rows } = await psTable($, 'pid=,ppid=')
-    const pids = descendants(rows.map(toRow), pid, selfPid)
-    const procs = await Promise.all(pids.map(child => linuxProc($, child, uptime)))
+    const pids = childPids(await psTable($, 'pid=,ppid='), pid)
+    const procs = await Promise.all(pids.map(child => readLinuxChild($, child, uptime)))
 
     return { engine, children: procs.filter(proc => proc !== undefined) }
   } catch {
@@ -105,24 +84,13 @@ const readLinux = async ($: EngineInterface, pid: number) => {
   }
 }
 
-const readMac = async ($: EngineInterface, pid: number, peakSeenKb: number) => {
-  const { selfPid, rows } = await psTable($, 'pid=,ppid=,rss=,time=,etime=,command=')
-  const own = rows.find(fields => Number(fields[0]) === pid)
-  if (!own) throw new Error(`process ${pid} not listed`)
-  const { rssKb, cpuSeconds, uptimeSeconds } = parseMacFields(own)
-  const pids = new Set(descendants(rows.map(toRow), pid, selfPid))
-  const children = rows.filter(fields => pids.has(Number(fields[0]))).map(parseMacFields)
-
-  // ps has no peak, so the highest resident size seen stands in for it.
-  return { engine: { rssKb, cpuSeconds, uptimeSeconds, peakKb: Math.max(peakSeenKb, rssKb) }, children }
-}
+const readMac = async ($: EngineInterface, pid: number, peakSeenKb: number) =>
+  macReading(await psTable($, 'pid=,ppid=,rss=,time=,etime=,command='), pid, peakSeenKb)
 
 const readWindows = async ($: EngineInterface, pid: number) => {
   const { stdout } = await $.process.run(['powershell', '-NoProfile', '-Command', powerShellSample(pid)])
-  const { engine, selfPid, rows } = parsePowerShell(stdout)
-  const pids = new Set(descendants(rows.map(toRow), pid, selfPid))
 
-  return { engine, children: rows.filter(fields => pids.has(Number(fields[0]))).map(windowsProc) }
+  return windowsReading(stdout, pid)
 }
 
 const readProcesses = (
@@ -130,7 +98,7 @@ const readProcesses = (
   platform: Platform,
   pid: number,
   peakSeenKb: number,
-): Promise<{ engine: Sample; children?: Proc[] }> => {
+): Promise<Gathered> => {
   switch (platform) {
     case 'linux':
       return readLinux($, pid)
