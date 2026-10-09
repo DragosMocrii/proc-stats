@@ -37,6 +37,24 @@ TIME, then PID, give way on a narrow pane.
 
 Both views refresh every second on Linux, every 2 seconds on macOS and every 5 on Windows, and work on Linux (`/proc` and `ps`), macOS (`ps`) and Windows (PowerShell).
 
+## Settings
+
+In Claude Code's config menu (`/config`), under proc-stats:
+
+| Setting | Default | |
+|---|---|---|
+| Refresh on Linux / macOS / Windows (ms) | 1000 / 2000 / 5000 | how often processes are read |
+| Memory warning / alert (MB) | 2048 / 4096 | 🟡 / 🔴 on the status line (session total) |
+| CPU warning / alert (%) | 150 / 300 | the same for CPU, averaged over 10 s |
+| Busy process CPU (%) / time (s) | 90 / 60 | a toast for one child process |
+| Large process memory (MB) | 1024 | a toast for one child process |
+| History (minutes) | 10 | the pane's sparklines |
+| Child processes on the status line | on | the `+` part |
+
+A value out of range is ignored and its default used.
+
+(The markers, toasts and sparklines arrive in later packages; the settings exist now so the config menu does not change shape again.)
+
 ## Install
 
 At the prompt of a Claude Code terminal session:
