@@ -13,7 +13,8 @@ import {
 } from './stats'
 import type { Proc, Sample } from './stats'
 
-export type Gathered = { engine: Sample; children?: Proc[] }
+// Claude Code, the processes under it, and the detached processes this session started (where tracked).
+export type Gathered = { engine: Sample; children?: Proc[]; detached?: Proc[] }
 
 type Table = { selfPid: number; rows: string[][] }
 

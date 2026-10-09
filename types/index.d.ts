@@ -85,6 +85,9 @@ export type StopState = Selected & {
 // The pane's own state, kept across reloads. `collapsed` holds the pids of collapsed rows.
 export type PaneState = { sort: SortMode; collapsed: number[]; selected: Selected | null; stop: StopState | null }
 
+// This session's mark: the id its commands carry in PROC_STATS_SESSION, and when it was made (ms since the epoch).
+export type SessionMark = { id: string; startMs: number }
+
 // Who started a process: the tool, and the subagent whose call it was (null for the main conversation).
 export type Origin = { tool: string; agent: { type: string; description: string } | null }
 
@@ -102,6 +105,15 @@ declare module 'claude-code' {
     // alerts: the marker levels and each child process's toast tracking, kept across reloads.
     // pane: the Processes pane's sort, collapsed rows, selection and stop in progress.
     // origins: recorded Bash/Monitor calls and the origins of listed processes.
-    'proc-stats': { reading: Reading; isOpen: boolean; history: History; alerts: AlertState; pane: PaneState; origins: Origins }
+    // session: the mark detached processes are found by, kept across reloads.
+    'proc-stats': {
+      reading: Reading
+      isOpen: boolean
+      history: History
+      alerts: AlertState
+      pane: PaneState
+      origins: Origins
+      session: SessionMark
+    }
   }
 }

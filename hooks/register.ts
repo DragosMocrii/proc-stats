@@ -1,9 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AlertState, History, Origin, OriginCall, Origins, PaneState, Point, Reading, StopState } from '../types'
+import type { AlertState, History, Origin, OriginCall, Origins, PaneState, Point, Reading, SessionMark, StopState } from '../types'
 import { historyCapacity, pointOf, pointSpacingMs, pushPoint, shouldRecord } from './history'
 import { EMPTY_ALERTS, markerFor, stepAlerts, worse } from './alerts'
+import { candidatesOf, environHasMark, macMarkedPids, oursOf, rememberMarks, startedFrom, unreadOf } from './detached'
+import type { MarkCache } from './detached'
 import { CALL_TTL_MS, EMPTY_ORIGINS, matchOrigins, UNNAMED_AGENT } from './origin'
 import { drawPane } from './pane'
 import type { PaneHandlers } from './pane'
@@ -32,7 +34,7 @@ import type { Observed } from './stop'
 import { cycleSort, EMPTY_PANE, isSelected, labelOf, pruneState, toggleCollapsed } from './view'
 import { childPids, linuxEngine, linuxProc, macReading, windowsReading } from './sampler'
 import type { Gathered } from './sampler'
-import { isComplete, parsePsTable, powerShellSample } from './stats'
+import { isComplete, parseMacFields, parsePsTable, powerShellSample } from './stats'
 import type { Platform, Proc } from './stats'
 
 const PANE = 'proc-stats'
@@ -49,6 +51,11 @@ const history = atom(HISTORY, { points: [] } as History)
 const alerts = atom(ALERTS, EMPTY_ALERTS as AlertState)
 const ORIGINS = { plugin: 'proc-stats', key: 'origins' } as const
 const origins = atom(ORIGINS, EMPTY_ORIGINS as Origins)
+const SESSION = { plugin: 'proc-stats', key: 'session' } as const
+const session = atom(SESSION, { id: '', startMs: 0 } as SessionMark)
+// macOS reads environments with one `ps eww` at most this often.
+const MAC_SCAN_MS = 10_000
+const DETACHED_OFF = 'Detached processes are not tracked: the session mark could not be set.'
 // Long enough to read a process name and its numbers.
 const TOAST_MS = 8000
 const OPEN = { id: PANE, title: 'Processes' }
@@ -101,7 +108,48 @@ const readLinuxChild = async ($: EngineInterface, pid: number, uptime: string): 
   }
 }
 
-const readLinux = async ($: EngineInterface, pid: number): Promise<Gathered> => {
+// What finding detached processes keeps between readings: the session's mark, what is known of
+// each pid's environment, and when macOS last read environments.
+type Finder = { mark: SessionMark; cache: MarkCache; scannedAt: number }
+
+// Linux: the environment of each candidate not read before, once; one that cannot be read is not ours.
+const linuxDetached = async ($: EngineInterface, finder: Finder, rows: string[][], excluded: Set<number>, wallMs: number) => {
+  const candidates = candidatesOf(startedFrom(rows, 2, wallMs), excluded, finder.mark.startMs)
+  const read = await Promise.all(
+    unreadOf(finder.cache, candidates).map(async each => {
+      try {
+        return { ...each, isOurs: environHasMark(await $.fs.read(`/proc/${each.pid}/environ`), finder.mark.id) }
+      } catch {
+        return { ...each, isOurs: false }
+      }
+    }),
+  )
+  finder.cache = rememberMarks(finder.cache, candidates, read)
+
+  return oursOf(finder.cache, candidates)
+}
+
+// macOS: one `ps eww` over the candidates not read before, at most every MAC_SCAN_MS; until it runs they are not shown.
+const macDetached = async ($: EngineInterface, finder: Finder, rows: string[][], excluded: Set<number>, wallMs: number) => {
+  const candidates = candidatesOf(startedFrom(rows, 4, wallMs), excluded, finder.mark.startMs)
+  const unread = unreadOf(finder.cache, candidates)
+  let read: { pid: number; startMs: number; isOurs: boolean }[] = []
+  if (unread.length > 0 && wallMs - finder.scannedAt >= MAC_SCAN_MS) {
+    finder.scannedAt = wallMs
+    try {
+      const { stdout } = await $.process.run(['ps', 'eww', '-o', 'pid=,command=', '-p', unread.map(each => each.pid).join(',')])
+      const marked = macMarkedPids(stdout, finder.mark.id)
+      read = unread.map(each => ({ ...each, isOurs: marked.has(each.pid) }))
+    } catch {
+      // Read again at the next scan.
+    }
+  }
+  finder.cache = rememberMarks(finder.cache, candidates, read)
+
+  return oursOf(finder.cache, candidates)
+}
+
+const readLinux = async ($: EngineInterface, pid: number, finder: Finder | null): Promise<Gathered> => {
   const [status, stat, uptime] = await Promise.all([
     $.fs.read(`/proc/${pid}/status`),
     $.fs.read(`/proc/${pid}/stat`),
@@ -109,17 +157,30 @@ const readLinux = async ($: EngineInterface, pid: number): Promise<Gathered> => 
   ])
   const engine = linuxEngine(status, stat, uptime)
   try {
-    const pids = childPids(await psTable($, 'pid=,ppid='), pid)
-    const procs = await Promise.all(pids.map(child => readLinuxChild($, child, uptime)))
+    const table = await psTable($, 'pid=,ppid=,etime=')
+    const pids = childPids(table, pid)
+    const excluded = new Set([pid, table.selfPid, ...pids])
+    const ours = finder ? await linuxDetached($, finder, table.rows, excluded, await $.clock.now()) : []
+    const [procs, detached] = await Promise.all([
+      Promise.all(pids.map(child => readLinuxChild($, child, uptime))),
+      Promise.all(ours.map(each => readLinuxChild($, each, uptime))),
+    ])
 
-    return { engine, children: procs.filter(proc => proc !== undefined) }
+    return { engine, children: procs.filter(proc => proc !== undefined), detached: detached.filter(proc => proc !== undefined) }
   } catch {
     return { engine }
   }
 }
 
-const readMac = async ($: EngineInterface, pid: number, peakSeenKb: number) =>
-  macReading(await psTable($, 'pid=,ppid=,rss=,time=,etime=,command='), pid, peakSeenKb)
+const readMac = async ($: EngineInterface, pid: number, peakSeenKb: number, finder: Finder | null): Promise<Gathered> => {
+  const table = await psTable($, 'pid=,ppid=,rss=,time=,etime=,command=')
+  const gathered = macReading(table, pid, peakSeenKb)
+  if (!finder) return gathered
+  const excluded = new Set([pid, table.selfPid, ...(gathered.children ?? []).map(child => child.pid)])
+  const ours = new Set(await macDetached($, finder, table.rows, excluded, await $.clock.now()))
+
+  return { ...gathered, detached: table.rows.filter(fields => ours.has(Number(fields[0]))).map(parseMacFields) }
+}
 
 const readWindows = async ($: EngineInterface, pid: number) => {
   const { stdout } = await $.process.run(['powershell', '-NoProfile', '-Command', powerShellSample(pid)])
@@ -132,12 +193,13 @@ const readProcesses = (
   platform: Platform,
   pid: number,
   peakSeenKb: number,
+  finder: Finder | null,
 ): Promise<Gathered> => {
   switch (platform) {
     case 'linux':
-      return readLinux($, pid)
+      return readLinux($, pid, finder)
     case 'mac':
-      return readMac($, pid, peakSeenKb)
+      return readMac($, pid, peakSeenKb, finder)
     case 'windows':
       return readWindows($, pid)
   }
@@ -331,8 +393,23 @@ const paneHandlers = ($: EngineInterface): PaneHandlers => ({
   onCancel: () => void update($, pane, state => ({ ...state, stop: null })),
 })
 
+// This session's mark: made once and kept across reloads, then set for every command started from now
+// on. Null when it could not be set: detached processes are then not tracked.
+const markSession = async ($: EngineInterface): Promise<SessionMark | null> => {
+  try {
+    const fresh = { id: crypto.randomUUID(), startMs: await $.clock.now() }
+    let mark = fresh
+    await update($, session, kept => (mark = kept.id ? kept : fresh))
+    await $.env.set('PROC_STATS_SESSION', mark.id)
+
+    return mark
+  } catch {
+    return null
+  }
+}
+
 // One loop feeds both views: the status line, and the reading the pane draws.
-const startSampling = async ($: EngineInterface, settings: Settings) => {
+const startSampling = async ($: EngineInterface, settings: Settings, mark: SessionMark | null) => {
   const set = (next: Reading) => update($, reading, () => next)
 
   try {
@@ -343,15 +420,18 @@ const startSampling = async ($: EngineInterface, settings: Settings) => {
     const spacingMs = pointSpacingMs(settings.historyMinutes)
     let before: Timed | undefined
     let isBusy = false
+    // Windows finds no detached processes (documented); elsewhere only with the session marked.
+    const finder: Finder | null = mark && platform !== 'windows' ? { mark, cache: new Map(), scannedAt: -Infinity } : null
+    const detachedOff = mark === null && platform !== 'windows' ? { detachedOff: DETACHED_OFF } : {}
 
     const sample = async () => {
       if (isBusy) return
       isBusy = true
       try {
-        const sample = await readProcesses($, platform, pid, before?.engine.peakKb ?? 0)
+        const sample = await readProcesses($, platform, pid, before?.engine.peakKb ?? 0, finder)
         if (!isComplete(sample.engine)) throw new Error('unreadable sample')
         const now = { ...sample, wallMs: await $.clock.now() }
-        const snapshot = buildSnapshot(platform, pid, now, before)
+        const snapshot = { ...buildSnapshot(platform, pid, now, before), ...detachedOff }
         await set({ snapshot: capRows(snapshot) })
         try {
           const kept = (await $.state.get(PANE_STATE)).value ?? EMPTY_PANE
@@ -514,7 +594,7 @@ export const register: Register = (on, options) => {
       description: 'Show Claude Code and the processes it started in a task-manager pane, or a report',
       argumentHint: '[report]',
     })
-    void startSampling($, settings)
+    void startSampling($, settings, await markSession($))
     // A reload drops the check timer of a stop already signalled; schedule it again.
     const phase = (await $.state.get(PANE_STATE)).value?.stop?.phase
     if (phase === 'sent' || phase === 'forced') $.clock.after(STOP_CHECK_MS, () => void checkStop($))
