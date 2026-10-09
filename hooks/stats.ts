@@ -5,7 +5,7 @@ export type Platform = 'linux' | 'mac' | 'windows'
 
 export type Sample = { rssKb: number; peakKb: number; cpuSeconds: number; uptimeSeconds: number }
 
-// One process below the engine.
+// One process: below the engine, or detached from it.
 export type Proc = {
   pid: number
   ppid: number

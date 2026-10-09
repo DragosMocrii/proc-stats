@@ -1,5 +1,5 @@
-// A reading assembled from what the platform printed: Claude Code's own
-// figures and its descendants. The reads themselves stay in register.ts.
+// A reading assembled from what the platform printed: Claude Code's own figures, its descendants
+// and, where tracked, the detached processes this session started. The reads themselves stay in register.ts.
 
 import {
   descendants,

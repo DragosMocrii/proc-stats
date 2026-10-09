@@ -1,8 +1,8 @@
-// One process below Claude Code, in tree order.
+// One listed process: one under Claude Code (in tree order), or a detached one (after the tree).
 export type ProcRow = {
   pid: number
   ppid: number
-  // 0 for a direct child of Claude Code.
+  // 0 for a direct child of Claude Code, a root of the detached group, or a process whose parent ended.
   depth: number
   command: string
   rssKb: number
@@ -19,7 +19,8 @@ export type Snapshot = {
   platform: string
   pid: number
   engine: { rssKb: number; peakKb: number; cpuPercent: number | null; uptimeSeconds: number }
-  // Null when the process table could not be read; capped for the pane.
+  // The processes under Claude Code in tree order, then the detached ones; null when the process table
+  // could not be read; capped for the pane.
   children: ProcRow[] | null
   // Over every process found, capped rows included: those under Claude Code and the detached ones.
   childCount: number

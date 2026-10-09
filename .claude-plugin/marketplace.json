@@ -6,7 +6,7 @@
     {
       "name": "proc-stats",
       "source": "./",
-      "description": "Status line with Claude Code's memory, peak memory, CPU and uptime, and those of the processes it started"
+      "description": "Status line, task-manager pane and report of Claude Code's memory, CPU and uptime, and those of the processes it started"
     }
   ]
 }

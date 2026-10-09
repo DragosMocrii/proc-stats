@@ -3,10 +3,11 @@
 import type { Snapshot } from '../types'
 import { formatBytes, formatDuration, formatPair, formatPercent } from './format'
 
-// The children's share shows only while there are any; `?` when the table could not be read.
+// The share of the processes the session started (under Claude Code or detached) shows only while there
+// are any; `?` when the table could not be read.
 export const statusLine = (snapshot: Snapshot, showChildren = true) => {
   const { engine, children, childCpuPercent } = snapshot
-  // Without the children, or with none running, Claude Code's own figures alone.
+  // Without them, or with none running, Claude Code's own figures alone.
   const hasChildren = showChildren && (children === null || snapshot.childCount > 0)
   let cpu = '…'
   if (engine.cpuPercent !== null) {

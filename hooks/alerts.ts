@@ -83,7 +83,7 @@ const cool = (isFired: boolean, isBelow: boolean, since: number | null, now: num
   return now - start >= COOL_MS ? { isFired: false, since: null } : { isFired, since: start }
 }
 
-// One reading of the child processes: the trackers after it, and the toasts it fires.
+// One reading of the listed processes (under Claude Code and detached): the trackers after it, and the toasts it fires.
 export const trackProcesses = (tracks: Record<string, ProcTrack>, rows: ProcRow[], now: number, settings: Settings) => {
   const next: Record<string, ProcTrack> = {}
   const fired: Fired[] = []
