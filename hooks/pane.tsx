@@ -74,10 +74,12 @@ export const drawPane = (
       </Box>
     )
   }
-  const { showPid, showTime, commandWidth } = paneColumns(bodyColumns - (PADDING_X + ROW_PADDING_X) * 2)
+  // The cells inside the pane's and each row's padding: what the rows and the charts lay out in.
+  const contentWidth = bodyColumns - (PADDING_X + ROW_PADDING_X) * 2
+  const { showPid, showTime, commandWidth } = paneColumns(contentWidth)
   const views = viewRows(snapshot, state)
   // The history's shape over the window, in the width the rows use.
-  const charts = sparkLines(points, bodyColumns - (PADDING_X + ROW_PADDING_X) * 2)
+  const charts = sparkLines(points, contentWidth)
   const numbers = (mem: string, cpu: string, time: string) =>
     ` ${fit(mem, NUMBER_WIDTH, true)} ${fit(cpu, NUMBER_WIDTH, true)}${showTime ? ` ${fit(time, TIME_WIDTH, true)}` : ''}`
   const pidCell = (pid: string) => (showPid ? `${fit(pid, PID_WIDTH)} ` : '')

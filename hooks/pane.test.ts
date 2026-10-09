@@ -418,7 +418,7 @@ test('the pane draws the memory and CPU history above the table, once there is s
     { t: 1000, memKb: 1024 * MB, cpuPct: 200 },
   ]
   const drawn = await mount()
-  expect(await drawn.find({ type: 'Text', text: /^mem ▅█ +1\.00GB$/ })).toBeDefined()
-  expect(await drawn.find({ type: 'Text', text: /^cpu ▃█ +200\.0%$/ })).toBeDefined()
+  expect(await drawn.find({ type: 'Text', text: /^mem ▁█ +1\.00GB max 1\.00GB$/ })).toBeDefined()
+  expect(await drawn.find({ type: 'Text', text: /^cpu ▃█ +200\.0% max 200\.0%$/ })).toBeDefined()
   await drawn.unmount()
 })
