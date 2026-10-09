@@ -20,12 +20,12 @@
   - validate: `claude plugin validate .` (must end `✔ Validation passed` with no warnings)
   - type-check: `npx -y -p typescript@5.9.3 tsc -p .`
 - Tests use only `expect(...).toBe / toEqual / toBeNull / toBeDefined / toContain / toThrow / toBeGreaterThan`; the kit has no `toBeCloseTo`, so assert exact values.
-- Settings defaults (verbatim from the spec): `intervalLinuxMs` 1000, `intervalMacMs` 2000, `intervalWindowsMs` 5000, `warnMemMb` 2048, `alertMemMb` 4096, `warnCpuPct` 150, `alertCpuPct` 300, `toastCpuPct` 90, `toastCpuSeconds` 60, `toastMemMb` 1024, `historyMinutes` 10, `statusShowChildren` true. Invalid or missing values fall back to the defaults.
+- Settings defaults (verbatim from the spec): `intervalLinuxMs` 1000, `intervalMacMs` 2000, `intervalWindowsMs` 5000, `warnMemMb` 2048, `alertMemMb` 4096, `warnCpuPct` 150, `alertCpuPct` 300, `toastCpuPct` 90, `toastCpuSeconds` 60, `toastMemMb` 1024, `historyMinutes` 10, `statusShowChildren` true. Invalid or missing values fall back to the defaults. A warning limit above its alert limit is lowered to the alert limit.
 - Package A changes nothing a person sees, except the settings rows in Claude Code's config menu and the pane coming back after a reload.
 
 ## Review Focus
 
-- **Contradictory limits** (`warnMemMb` above `alertMemMb`, or `warnCpuPct` above `alertCpuPct`): both of the pair fall back to their defaults rather than leaving a warn that can never show. Pinned in Task 4.
+- **Contradictory limits** (`warnMemMb` above `alertMemMb`, or `warnCpuPct` above `alertCpuPct`): the alert limit is kept and the warn limit is lowered to it, rather than leaving a warn that can never show. Pinned in Task 4.
 - **Interval changed mid-session**: the history keeps its newest points and trims to the new capacity, never growing past it or losing the newest point. Pinned in Task 5.
 - **Reload mid-session**: the module's variables reset but `$.state` does not; a history read before anything was written is the empty default and appending to it works. Pinned in Task 5.
 - **Points with the same timestamp, or too few points**: averages return `null` rather than dividing by zero. Pinned in Task 5.

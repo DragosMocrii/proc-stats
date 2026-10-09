@@ -68,7 +68,7 @@ Step one of the work is the split itself, with no visible change.
 | `historyMinutes` | 10 | sparkline window |
 | `statusShowChildren` | true | show the `+ children` part of the status line |
 
-Invalid or missing values fall back to the defaults.
+Invalid or missing values fall back to the defaults. A warning limit above its alert limit is lowered to the alert limit.
 
 ## Data and history
 

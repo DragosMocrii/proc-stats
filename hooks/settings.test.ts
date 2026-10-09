@@ -31,10 +31,12 @@ test('out of range, wrong type or not a number: the default', () => {
   expect(settings.statusShowChildren).toBe(true)
 })
 
-test('a warn limit above its alert limit: both defaults', () => {
-  const settings = readSettings({ warnMemMb: 5000, alertMemMb: 3000, warnCpuPct: 100, alertCpuPct: 200 })
-  expect([settings.warnMemMb, settings.alertMemMb]).toEqual([2048, 4096])
-  expect([settings.warnCpuPct, settings.alertCpuPct]).toEqual([100, 200])
+test('a warn limit above its alert limit is lowered to the alert limit', () => {
+  const settings = readSettings({ warnMemMb: 5000, alertMemMb: 3000, warnCpuPct: 400, alertCpuPct: 200 })
+  expect([settings.warnMemMb, settings.alertMemMb]).toEqual([3000, 3000])
+  expect([settings.warnCpuPct, settings.alertCpuPct]).toEqual([200, 200])
+  const alone = readSettings({ alertMemMb: 1000 })
+  expect([alone.warnMemMb, alone.alertMemMb]).toEqual([1000, 1000])
 })
 
 test('the mod loads with settings given', { options: { intervalLinuxMs: 500, statusShowChildren: false } }, async () => {

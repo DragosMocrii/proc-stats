@@ -34,20 +34,17 @@ export const DEFAULTS: Settings = {
 const number = (value: unknown, fallback: number, min: number, max: number) =>
   typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : fallback
 
-// A warn limit above its alert limit could never show: both fall back.
-const pair = (warn: number, alert: number, defaults: [number, number]): [number, number] =>
-  warn <= alert ? [warn, alert] : defaults
+// A warn limit above its alert limit could never show: it is lowered to the alert limit.
+const pair = (warn: number, alert: number): [number, number] => [Math.min(warn, alert), alert]
 
 export const readSettings = (options: PluginOptions): Settings => {
   const [warnMemMb, alertMemMb] = pair(
     number(options.warnMemMb, DEFAULTS.warnMemMb, 1, 1_000_000),
     number(options.alertMemMb, DEFAULTS.alertMemMb, 1, 1_000_000),
-    [DEFAULTS.warnMemMb, DEFAULTS.alertMemMb],
   )
   const [warnCpuPct, alertCpuPct] = pair(
     number(options.warnCpuPct, DEFAULTS.warnCpuPct, 1, 100_000),
     number(options.alertCpuPct, DEFAULTS.alertCpuPct, 1, 100_000),
-    [DEFAULTS.warnCpuPct, DEFAULTS.alertCpuPct],
   )
 
   return {
