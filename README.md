@@ -82,6 +82,29 @@ Answer `y` to add the marketplace, then choose a scope (user scope loads it in e
 - A command that starts and ends between two readings is not counted.
 - `+ ?` means the process table could not be read (for example no `ps` in a minimal container).
 
+## FAQ
+
+**Does it add much overhead?**
+Little. Each reading runs `ps` once. On Linux it also reads a few small `/proc` files for Claude Code and for each process under it, and reads a new process's environment once. A reading that is due while the last one is still running is skipped, so readings never pile up. With 36 processes running, one `ps` call takes about 5 ms. Windows costs more because every reading starts PowerShell, so it reads every 5 seconds by default. The mod only reads: it attaches to no process, does not slow any process down, and sends nothing over the network. It runs inside Claude Code, so its own memory and CPU show in Claude Code's row. It keeps at most 2,400 history points and 500 rows. For a lighter load, raise the refresh in Settings.
+
+**Is it configurable?**
+Yes, in `/config` under proc-stats. You can set how often each platform is read, the memory and CPU limits for the 🟡 / 🔴 markers and the toasts, how far back the history goes, and whether the status line shows the `+` part for child processes. See [Settings](#settings).
+
+**Can I resize the pane?**
+Yes. Claude Code places the pane and sizes it, not the mod. In the fullscreen layout at 110 columns or more, it docks beside the conversation; otherwise it sits above the prompt. You can drag it to another size, and Claude Code keeps the size you set. When the pane is narrow, the TIME column is hidden first, then PID.
+
+**Why is CPU above 100%?**
+CPU is a share of one core, as in `top`, so 250% means two and a half cores are busy.
+
+**Does it see my other sessions and terminals?**
+No. It sees Claude Code, the processes under it, and detached processes that carry this session's mark. Each session gets its own mark, so another session's processes are not counted.
+
+**What is `PROC_STATS_SESSION` in my environment?**
+It is this session's mark, a random ID that the mod sets for every command the session starts. The mod uses it to find processes that have detached. It holds nothing else.
+
+**Can it stop a process by mistake?**
+No. It stops a process only when you press **k** on its row in the pane and then confirm with **y**. Claude Code's own row cannot be stopped.
+
 ## Development
 
 ```
