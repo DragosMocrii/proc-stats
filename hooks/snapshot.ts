@@ -55,7 +55,7 @@ export const buildSnapshot = (
   const elapsed = before ? (now.wallMs - before.wallMs) / 1000 : 0
   const isMeasured = before !== undefined && elapsed > 0
   const was = new Map((before?.children ?? []).map(proc => [proc.pid, proc]))
-  const canCompare = isMeasured && before?.children !== undefined
+  const canCompare = isMeasured && before?.children !== undefined && now.children !== undefined
   let childDelta = 0
   const rows = now.children
     ? treeOrder(now.children, pid).map(({ proc, depth }): ProcRow => {

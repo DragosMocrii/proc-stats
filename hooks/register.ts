@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { History, Reading } from '../types'
-import { historyCapacity, pointOf, pushPoint } from './history'
+import { historyCapacity, pointOf, pointSpacingMs, pushPoint, shouldRecord } from './history'
 import { drawPane } from './pane'
 import { buildSnapshot, capRows } from './snapshot'
 import type { Timed } from './snapshot'
@@ -119,6 +119,8 @@ const startSampling = async ($: EngineInterface, settings: Settings) => {
     const platform = await detectPlatform($)
     const pid = await enginePid($, platform)
     const capacity = historyCapacity(settings.historyMinutes, settings.intervalMs[platform])
+    const windowMs = settings.historyMinutes * 60_000
+    const spacingMs = pointSpacingMs(settings.historyMinutes)
     let before: Timed | undefined
     let isBusy = false
 
@@ -132,8 +134,16 @@ const startSampling = async ($: EngineInterface, settings: Settings) => {
         const snapshot = buildSnapshot(platform, pid, now, before)
         $.ui.status(statusLine(snapshot, settings.statusShowChildren))
         await set({ snapshot: capRows(snapshot) })
-        const point = pointOf(snapshot, now.wallMs)
-        if (point) await update($, history, kept => pushPoint(kept, point, capacity))
+        try {
+          const point = pointOf(snapshot, now.wallMs)
+          if (point) {
+            await update($, history, kept =>
+              shouldRecord(kept, point, spacingMs) ? pushPoint(kept, point, capacity, windowMs) : kept,
+            )
+          }
+        } catch {
+          // The point is skipped; the reading above stands.
+        }
         before = now
       } catch {
         const error = `cannot read process ${pid} on ${platform}`
@@ -165,7 +175,7 @@ export const register: Register = (on, options) => {
     })
     void startSampling($, settings)
     // A reload closes the pane (an unload no hook hears); put it back if it was open.
-    if (await read($, isOpen)) void $.ui.open(OPEN)
+    if (await read($, isOpen)) void $.ui.open(OPEN).catch(() => undefined)
 
     return started
   })

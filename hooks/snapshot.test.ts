@@ -53,3 +53,9 @@ test('snapshot: own and started CPU, totals over every process', () => {
   ])
   expect(buildSnapshot('linux', 10, now, undefined).engine.cpuPercent).toBeNull()
 })
+
+test('children unreadable now: their CPU is unknown, not zero', () => {
+  const before: Timed = { engine, children: [proc(11, 10, { cpuSeconds: 1 })], wallMs: 0 }
+  const now: Timed = { engine: { ...engine, cpuSeconds: 1.5 }, children: undefined, wallMs: 5000 }
+  expect(buildSnapshot('linux', 10, now, before).childCpuPercent).toBeNull()
+})

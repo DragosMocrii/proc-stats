@@ -21,6 +21,9 @@ test('status line: the + part only while processes run', () => {
   expect(statusLine(buildSnapshot('linux', 10, { ...now, children: undefined }, before))).toContain(
     'mem (484 + ?)MB',
   )
+  expect(statusLine(buildSnapshot('linux', 10, { ...now, children: undefined }, before))).toContain(
+    'cpu (10.0 + ?)%',
+  )
   expect(statusLine(buildSnapshot('linux', 10, now, undefined))).toContain('cpu …')
 })
 
