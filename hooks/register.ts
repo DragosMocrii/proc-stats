@@ -1,8 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { History, Reading } from '../types'
+import type { AlertState, History, Reading } from '../types'
 import { historyCapacity, pointOf, pointSpacingMs, pushPoint, shouldRecord } from './history'
+import { EMPTY_ALERTS, markerFor, stepAlerts, worse } from './alerts'
 import { drawPane } from './pane'
 import { buildSnapshot, capRows } from './snapshot'
 import type { Timed } from './snapshot'
@@ -19,7 +20,12 @@ const COMMAND = 'proc-stats'
 
 const reading = atom({ plugin: 'proc-stats', key: 'reading' } as const, {} as Reading)
 const isOpen = atom({ plugin: 'proc-stats', key: 'isOpen' } as const, false)
-const history = atom({ plugin: 'proc-stats', key: 'history' } as const, { points: [] } as History)
+const HISTORY = { plugin: 'proc-stats', key: 'history' } as const
+const ALERTS = { plugin: 'proc-stats', key: 'alerts' } as const
+const history = atom(HISTORY, { points: [] } as History)
+const alerts = atom(ALERTS, EMPTY_ALERTS as AlertState)
+// Long enough to read a process name and its numbers.
+const TOAST_MS = 8000
 const OPEN = { id: PANE, title: 'Processes' }
 
 const detectPlatform = async ($: EngineInterface): Promise<Platform> => {
@@ -132,7 +138,6 @@ const startSampling = async ($: EngineInterface, settings: Settings) => {
         if (!isComplete(sample.engine)) throw new Error('unreadable sample')
         const now = { ...sample, wallMs: await $.clock.now() }
         const snapshot = buildSnapshot(platform, pid, now, before)
-        $.ui.status(statusLine(snapshot, settings.statusShowChildren))
         await set({ snapshot: capRows(snapshot) })
         try {
           const point = pointOf(snapshot, now.wallMs)
@@ -144,6 +149,19 @@ const startSampling = async ($: EngineInterface, settings: Settings) => {
         } catch {
           // The point is skipped; the reading above stands.
         }
+        // Alerts after the history, which holds this reading's point; their failure costs the marker only.
+        let marker = ''
+        try {
+          const points = (await $.state.get(HISTORY)).value?.points ?? []
+          const previous = (await $.state.get(ALERTS)).value ?? EMPTY_ALERTS
+          const step = stepAlerts(previous, snapshot, points, now.wallMs, settings)
+          await update($, alerts, () => step.state)
+          marker = markerFor(worse(step.state.levels.mem, step.state.levels.cpu))
+          if (step.toast) $.ui.toast(step.toast, { timeoutMs: TOAST_MS })
+        } catch {
+          // No marker or toast this reading; the status line still shows.
+        }
+        $.ui.status(`${marker}${statusLine(snapshot, settings.statusShowChildren)}`)
         before = now
       } catch {
         const error = `cannot read process ${pid} on ${platform}`

@@ -55,6 +55,11 @@ A value out of range is ignored and its default used.
 
 (The markers, toasts and sparklines arrive in later packages; the settings exist now so the config menu does not change shape again.)
 
+## Alerts
+
+- **Status line:** 🟡 at the start of the line when the session (Claude Code and every process it started) uses more memory than the warning limit, or more CPU on average over the last 10 seconds; 🔴 above the alert limit. A marker clears only once its value is 10% below the limit, so it does not flicker.
+- **Toasts:** one when a child process stays above the busy-process CPU limit for the set time (short dips are tolerated), and one when it grows past the large-process memory limit. Each fires once per process, and again only after the process has been 10 seconds below 90% of the limit. Several at once become one toast.
+
 ## Install
 
 At the prompt of a Claude Code terminal session:
