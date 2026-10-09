@@ -21,11 +21,14 @@ mem (484 + 215)MB · peak 530MB · cpu (2.4 + 98.7)% · up 12m 4s
 
 `/proc-stats` opens a task-manager pane and gives it the keyboard (Esc hands it back to the prompt; click the pane or press ctrl+x then tab to return):
 
-- **Rows:** Claude Code's own row, then every process below it as a tree. A Bash command Claude ran shows as `$ <command>`; ▾/▸ marks a row with processes under it.
+- **Rows:** Claude Code's own row, then every process below it as a tree. A Bash command Claude ran shows as `$ <command>`; ▾/▸ marks a row with processes under it. Under the rows, **Child processes** sums every process below Claude Code and **Total** adds Claude Code's own.
 - **↑ / ↓** move between rows; the row you land on is selected and its full command, pid, parent, start time, memory and CPU show under the table.
 - **Enter or a click** selects a row, and on a row with processes under it collapses or expands it (collapsed, it shows its subtree's totals).
 - **s** sorts by CPU, memory or runtime (highest first, each row followed by its parent), then back to the tree.
-- **k** stops the selected process and everything it started: it asks first (**y** Stop, **n** Cancel), sends SIGTERM (Windows: `taskkill /T`), and after 3 seconds offers **f** Force stop (SIGKILL) if anything is still running. Claude Code's own row cannot be stopped.
+- **k** stops the selected process and everything it started: it asks first (**y** Stop, **n** Cancel; Esc, leaving the pane, cancels too), sends SIGTERM (Windows: `taskkill /T`), and after 3 seconds offers **f** Force stop (SIGKILL) if anything is still running, even a process that left the tree when its parent ended. Once a stop is sent the footer offers **n** Dismiss. Claude Code's own row cannot be stopped.
+  - Stopping a `$ …` row that Claude is still running ends that tool call.
+  - A stop reaches only the first 500 listed processes.
+  - On Windows a first stop may need **f**: `taskkill` without `/F` cannot end console processes.
 
 TIME, then PID, give way on a narrow pane.
 
@@ -49,7 +52,7 @@ In Claude Code's config menu (`/config`), under proc-stats:
 
 A value out of range is ignored and its default used.
 
-(The sparklines and the other pane features arrive in a later package; the settings exist now so the config menu does not change shape again.)
+(The sparklines, and which tool call or subagent started each process, arrive in a later package; the settings exist now so the config menu does not change shape again.)
 
 ## Alerts
 
