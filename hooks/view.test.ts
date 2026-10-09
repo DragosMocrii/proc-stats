@@ -160,3 +160,32 @@ test('totals and notes', () => {
 test('tree lines: a branch per sibling, a rail under ancestors with more to come', () => {
   expect(treePrefixes([0, 1, 2, 1, 0, 1].map(depth => ({ depth })))).toEqual(['├ ', '│ ├ ', '│ │ └ ', '│ └ ', '└ ', '  └ '])
 })
+
+test('a stuck stop clears when none of its processes is listed; sent and forced stay', () => {
+  const snapshot = tree()
+  const stop = { pid: 99, startMs: 0, label: 'gone', pids: [99, 98], phase: 'stuck' as const }
+  expect(pruneState(state({ stop }), snapshot).stop).toBeNull()
+  expect(pruneState(state({ stop: { ...stop, pids: [99, 12] } }), snapshot).stop).toEqual({ ...stop, pids: [99, 12] })
+  const forced = { ...stop, phase: 'forced' as const }
+  expect(pruneState(state({ stop: forced }), snapshot).stop).toEqual(forced)
+})
+
+test('a parent missing from the rows is named by its pid, in details and sorted views', () => {
+  const snapshot = tree()
+  const orphaned: Snapshot = { ...snapshot, children: snapshot.children!.filter(row => row.pid !== 11) }
+  const python = orphaned.children!.find(row => row.pid === 12)!
+  expect(detailLines(orphaned, { pid: 12, startMs: python.startMs })?.[1]).toContain('parent 11 (pid 11)')
+  const sorted = viewRows(orphaned, state({ sort: 'mem' }))
+  expect(sorted.find(view => view.row.pid === 12)?.parent).toBe('pid 11')
+})
+
+test('a collapsed row whose subtree runs to the end of the list', () => {
+  const snapshot = tree(pid => (pid === 12 ? 50 : 10))
+  const byPid = (pid: number) => snapshot.children!.find(row => row.pid === pid)!
+  const reordered: Snapshot = { ...snapshot, children: [byPid(20), byPid(11), byPid(12), byPid(13)] }
+  const rows = viewRows(reordered, state({ collapsed: [11] }))
+  expect(rows.map(view => view.row.pid)).toEqual([20, 11])
+  expect(rows[1]?.isCollapsed).toBe(true)
+  expect(rows[1]?.rssKb).toBe(254 * MB)
+  expect(rows[1]?.cpuPercent).toBe(70)
+})

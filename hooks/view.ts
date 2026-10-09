@@ -1,6 +1,6 @@
 // The pane's rows as text: labels, cells, tree or sorted order, collapsing, selection and details.
 
-import type { PaneState, ProcRow, Selected, Snapshot, SortMode } from '../types'
+import type { PaneState, ProcRow, Selected, Snapshot, SortMode, StopState } from '../types'
 import { formatBytes, formatDuration, formatPercent } from './format'
 
 export const EMPTY_PANE: PaneState = { sort: 'tree', collapsed: [], selected: null, stop: null }
@@ -90,6 +90,13 @@ const subtreeEnd = (rows: ProcRow[], index: number) => {
 const sumCpu = (rows: ProcRow[]) =>
   rows.some(row => row.cpuPercent === null) ? null : rows.reduce((sum, row) => sum + (row.cpuPercent ?? 0), 0)
 
+// A process's label, or its pid when it is not among the rows (past the cap, or ended).
+const labelIn = (rows: ProcRow[], pid: number) => {
+  const found = rows.find(row => row.pid === pid)
+
+  return found ? labelOf(found.command) : `pid ${pid}`
+}
+
 const sortKey: Record<Exclude<SortMode, 'tree'>, (row: ProcRow) => number> = {
   cpu: row => row.cpuPercent ?? -1,
   mem: row => row.rssKb,
@@ -99,7 +106,7 @@ const sortKey: Record<Exclude<SortMode, 'tree'>, (row: ProcRow) => number> = {
 export const viewRows = (snapshot: Snapshot, state: PaneState): ViewRow[] => {
   const rows = snapshot.children ?? []
   const labels = new Map(rows.map(row => [row.pid, labelOf(row.command)]))
-  const label = (pid: number) => labels.get(pid) ?? `pid ${pid}`
+  const label = (pid: number) => labels.get(pid) ?? labelIn(rows, pid)
   const sort = state.sort
   if (sort !== 'tree') {
     const key = sortKey[sort]
@@ -157,7 +164,12 @@ export const pruneState = (state: PaneState, snapshot: Snapshot): PaneState => {
   const isListed = (chosen: Selected) => rows.some(row => isSelected(row, chosen))
   const selected =
     state.selected && (state.selected.pid === snapshot.pid || isListed(state.selected)) ? state.selected : null
-  const stop = state.stop && (state.stop.phase !== 'confirm' || isListed(state.stop)) ? state.stop : null
+  const isStopListed = (stop: StopState) =>
+    stop.phase === 'stuck' ? stop.pids.some(pid => rows.some(row => row.pid === pid)) : isListed(stop)
+  const stop =
+    state.stop && (state.stop.phase === 'sent' || state.stop.phase === 'forced' || isStopListed(state.stop))
+      ? state.stop
+      : null
   const collapsed = state.collapsed.filter(pid => rows.some(row => row.pid === pid))
 
   return { ...state, selected, collapsed, stop }
@@ -181,8 +193,7 @@ export const detailLines = (snapshot: Snapshot, selected: Selected | null): stri
   const rows = snapshot.children ?? []
   const row = rows.find(each => isSelected(each, selected))
   if (!row) return null
-  const parentRow = rows.find(each => each.pid === row.ppid)
-  const parent = row.ppid === snapshot.pid ? 'Claude Code' : parentRow ? labelOf(parentRow.command) : 'ended'
+  const parent = row.ppid === snapshot.pid ? 'Claude Code' : labelIn(rows, row.ppid)
 
   return [
     oneLine(row.command),
