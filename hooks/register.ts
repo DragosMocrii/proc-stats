@@ -1,9 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { ProcRow, Reading, Snapshot } from '../types'
-import { formatBytes, formatDuration, formatPair, formatPercent } from './format'
+import type { Reading } from '../types'
 import { drawPane } from './pane'
+import { buildSnapshot, capRows } from './snapshot'
+import type { Timed } from './snapshot'
+import { statusLine } from './status'
 import {
   descendants,
   isComplete,
@@ -23,121 +25,10 @@ const PANE = 'proc-stats'
 const COMMAND = 'proc-stats'
 // Each reading starts ps (PowerShell on Windows), which costs more on a busy Mac and most on Windows.
 const INTERVAL_MS: Record<Platform, number> = { linux: 1000, mac: 2000, windows: 5000 }
-// A build can start hundreds of workers; the pane needs no more than this.
-const MAX_ROWS = 500
 
 const reading = atom({ plugin: 'proc-stats', key: 'reading' } as const, {} as Reading)
 const isOpen = atom({ plugin: 'proc-stats', key: 'isOpen' } as const, false)
 const OPEN = { id: PANE, title: 'Processes' }
-
-// The engine, and the processes it started (undefined when the table cannot be read).
-export type Timed = { engine: Sample; children?: Proc[]; wallMs: number }
-
-// CPU a process spent since the last reading, and as a share of one core. A pid
-// whose process is younger than the one seen before was reused: a new process,
-// counted whole over the time it has run.
-export const procCpu = (now: Proc, was: Proc | undefined, elapsed: number) => {
-  const isSame = was !== undefined && now.uptimeSeconds >= was.uptimeSeconds - 1
-  if (isSame) {
-    const delta = Math.max(0, now.cpuSeconds - was.cpuSeconds)
-
-    return { delta, percent: (delta / elapsed) * 100 }
-  }
-  const window = Math.max(1, Math.min(elapsed, now.uptimeSeconds))
-
-  return { delta: now.cpuSeconds, percent: (now.cpuSeconds / window) * 100 }
-}
-
-// Depth-first from the engine, each level by pid.
-export const treeOrder = (procs: Proc[], root: number) => {
-  const byParent = new Map<number, Proc[]>()
-  for (const proc of procs) byParent.set(proc.ppid, [...(byParent.get(proc.ppid) ?? []), proc])
-  for (const list of byParent.values()) list.sort((a, b) => a.pid - b.pid)
-  const ordered: { proc: Proc; depth: number }[] = []
-  const seen = new Set<number>()
-  const visit = (pid: number, depth: number) => {
-    for (const proc of byParent.get(pid) ?? []) {
-      if (seen.has(proc.pid)) continue
-      seen.add(proc.pid)
-      ordered.push({ proc, depth })
-      visit(proc.pid, depth + 1)
-    }
-  }
-  visit(root, 0)
-  // A process whose parent ended between reads is kept, at the top level.
-  for (const proc of procs) if (!seen.has(proc.pid)) ordered.push({ proc, depth: 0 })
-
-  return ordered
-}
-
-export const buildSnapshot = (
-  platform: Platform,
-  pid: number,
-  now: Timed,
-  before: Timed | undefined,
-): Snapshot => {
-  const elapsed = before ? (now.wallMs - before.wallMs) / 1000 : 0
-  const isMeasured = before !== undefined && elapsed > 0
-  const was = new Map((before?.children ?? []).map(proc => [proc.pid, proc]))
-  const canCompare = isMeasured && before?.children !== undefined
-  let childDelta = 0
-  const rows = now.children
-    ? treeOrder(now.children, pid).map(({ proc, depth }): ProcRow => {
-        const cpu = canCompare ? procCpu(proc, was.get(proc.pid), elapsed) : undefined
-        childDelta += cpu?.delta ?? 0
-
-        return {
-          pid: proc.pid,
-          ppid: proc.ppid,
-          depth,
-          command: proc.command,
-          rssKb: proc.rssKb,
-          cpuPercent: cpu ? cpu.percent : null,
-          uptimeSeconds: proc.uptimeSeconds,
-        }
-      })
-    : null
-
-  return {
-    platform,
-    pid,
-    engine: {
-      rssKb: now.engine.rssKb,
-      peakKb: now.engine.peakKb,
-      cpuPercent:
-        isMeasured && before
-          ? (Math.max(0, now.engine.cpuSeconds - before.engine.cpuSeconds) / elapsed) * 100
-          : null,
-      uptimeSeconds: now.engine.uptimeSeconds,
-    },
-    children: rows,
-    childCount: rows?.length ?? 0,
-    childKb: rows?.reduce((sum, row) => sum + row.rssKb, 0) ?? 0,
-    childCpuPercent: canCompare ? (childDelta / elapsed) * 100 : null,
-  }
-}
-
-// What the pane is handed: the totals over every process, the rows capped.
-export const capRows = (snapshot: Snapshot): Snapshot => ({
-  ...snapshot,
-  children: snapshot.children?.slice(0, MAX_ROWS) ?? null,
-})
-
-// The children's share shows only while there are any; `?` when the table could not be read.
-export const statusLine = (snapshot: Snapshot) => {
-  const { engine, children, childCpuPercent } = snapshot
-  const hasChildren = children === null || snapshot.childCount > 0
-  let cpu = '…'
-  if (engine.cpuPercent !== null) {
-    const own = engine.cpuPercent.toFixed(1)
-    cpu = hasChildren
-      ? `(${own} + ${childCpuPercent === null ? '?' : childCpuPercent.toFixed(1)})%`
-      : formatPercent(engine.cpuPercent)
-  }
-  const childKb = children === null ? undefined : snapshot.childKb
-
-  return `mem ${formatPair(engine.rssKb, hasChildren ? childKb : 0)} · peak ${formatBytes(engine.peakKb)} · cpu ${cpu} · up ${formatDuration(engine.uptimeSeconds)}`
-}
 
 const detectPlatform = async ($: EngineInterface): Promise<Platform> => {
   if ((await $.env.get('OS')) === 'Windows_NT') return 'windows'
