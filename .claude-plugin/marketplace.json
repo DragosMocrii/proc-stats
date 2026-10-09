@@ -1,0 +1,12 @@
+{
+  "name": "proc-stats",
+  "description": "Claude Code mods by Dragos Mocrii",
+  "owner": { "name": "Dragos Mocrii", "email": "dragosmocrii@gmail.com" },
+  "plugins": [
+    {
+      "name": "proc-stats",
+      "source": "./",
+      "description": "Status line with Claude Code's memory, peak memory, CPU and uptime, and those of the processes it started"
+    }
+  ]
+}
