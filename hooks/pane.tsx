@@ -1,7 +1,8 @@
 import type { Elements, RenderSurface } from 'claude-code'
 
-import type { PaneState, Reading } from '../types'
+import type { PaneState, Point, Reading } from '../types'
 import { formatBytes, formatDuration, formatPercent } from './format'
+import { sparkLines } from './sparkline'
 import { confirmText } from './stop'
 import { detailLines, fit, isSelected, noteLine, totalLines, viewRows } from './view'
 import type { ViewRow } from './view'
@@ -62,6 +63,7 @@ export const drawPane = (
   { Box, Text, Button }: Elements[RenderSurface],
   { snapshot, error }: Reading,
   state: PaneState,
+  points: Point[],
   bodyColumns: number,
   handlers: PaneHandlers,
 ) => {
@@ -74,6 +76,8 @@ export const drawPane = (
   }
   const { showPid, showTime, commandWidth } = paneColumns(bodyColumns - (PADDING_X + ROW_PADDING_X) * 2)
   const views = viewRows(snapshot, state)
+  // The history's shape over the window, in the width the rows use.
+  const charts = sparkLines(points, bodyColumns - (PADDING_X + ROW_PADDING_X) * 2)
   const numbers = (mem: string, cpu: string, time: string) =>
     ` ${fit(mem, NUMBER_WIDTH, true)} ${fit(cpu, NUMBER_WIDTH, true)}${showTime ? ` ${fit(time, TIME_WIDTH, true)}` : ''}`
   const pidCell = (pid: string) => (showPid ? `${fit(pid, PID_WIDTH)} ` : '')
@@ -145,6 +149,12 @@ export const drawPane = (
 
   return (
     <Box flexDirection="column" paddingX={PADDING_X} paddingBottom={PADDING_BOTTOM}>
+      {charts !== null && (
+        <Box flexDirection="column" paddingX={ROW_PADDING_X}>
+          <Text>{charts[0]}</Text>
+          <Text>{charts[1]}</Text>
+        </Box>
+      )}
       <Box marginBottom={1} paddingX={ROW_PADDING_X}>
         <Text dimColor>
           peak {formatBytes(engine.peakKb)} · {snapshot.platform}

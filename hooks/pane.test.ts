@@ -397,3 +397,28 @@ test('macOS: liveness from one ps call outside the tree; f kills the survivor', 
   ])
   await ui.unmount()
 })
+
+test('the pane draws the memory and CPU history above the table, once there is some', async ($, on) => {
+  on('state.get', { plugin: 'proc-stats', key: 'reading' }, () => ({ value: { value: { snapshot }, version: 1 } }))
+  let points: { t: number; memKb: number; cpuPct: number }[] = []
+  on('state.get', { plugin: 'proc-stats', key: 'history' }, () => ({ value: { value: { points }, version: 1 } }))
+  const mount = () =>
+    $.ui.mount({
+      plugin: 'proc-stats',
+      surface: 'terminal',
+      component: 'Pane',
+      requestId: 'proc-stats',
+      props: { ...PANE_PROPS, bodyColumns: 80 },
+    })
+  const empty = await mount()
+  expect(await empty.find({ type: 'Text', text: /^cpu / })).toBeUndefined()
+  await empty.unmount()
+  points = [
+    { t: 0, memKb: 512 * MB, cpuPct: 50 },
+    { t: 1000, memKb: 1024 * MB, cpuPct: 200 },
+  ]
+  const drawn = await mount()
+  expect(await drawn.find({ type: 'Text', text: /^mem ▅█ +1\.00GB$/ })).toBeDefined()
+  expect(await drawn.find({ type: 'Text', text: /^cpu ▃█ +200\.0%$/ })).toBeDefined()
+  await drawn.unmount()
+})

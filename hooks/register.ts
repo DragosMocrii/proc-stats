@@ -443,7 +443,14 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
-    drawPane($.ui.resolve(e), await read($, reading), await read($, pane), e.props.bodyColumns, paneHandlers($)),
+    drawPane(
+      $.ui.resolve(e),
+      await read($, reading),
+      await read($, pane),
+      (await read($, history)).points,
+      e.props.bodyColumns,
+      paneHandlers($),
+    ),
   )
 
   // Arrow keys move the focus ring over the rows; the row it lands on is the selection.
