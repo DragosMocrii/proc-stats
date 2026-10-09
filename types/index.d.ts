@@ -73,6 +73,15 @@ export type StopState = Selected & {
 // The pane's own state, kept across reloads. `collapsed` holds the pids of collapsed rows.
 export type PaneState = { sort: SortMode; collapsed: number[]; selected: Selected | null; stop: StopState | null }
 
+// Who started a process: the tool, and the subagent whose call it was (null for the main conversation).
+export type Origin = { tool: string; agent: { type: string; description: string } | null }
+
+// A Bash or Monitor call recorded before it ran: its exact command, and when (ms since the epoch).
+export type OriginCall = Origin & { command: string; at: number }
+
+// Calls not yet matched to a process, and the origins of listed processes by pid (with their start).
+export type Origins = { calls: OriginCall[]; byPid: Record<string, Origin & { startMs: number }> }
+
 declare module 'claude-code' {
   interface PluginState {
     // isOpen: whether the person has the pane open, so a reload can reopen it.
