@@ -59,8 +59,16 @@ export type SortMode = 'tree' | 'cpu' | 'mem' | 'time'
 // A chosen process: its pid and start, so a pid reused by another process is not it.
 export type Selected = { pid: number; startMs: number }
 
-// A stop in progress: confirm → sent → stuck (still listed after 3 s) → forced.
-export type StopState = Selected & { label: string; pids: number[]; phase: 'confirm' | 'sent' | 'stuck' | 'forced' }
+// A stop in progress: confirm → sent → stuck (still running at the check) → forced.
+// `starts` holds each pid's start (ms), from the reading the pids came from; `checks` counts checks
+// that found no reading or could not read which processes still run.
+export type StopState = Selected & {
+  label: string
+  pids: number[]
+  starts: number[]
+  checks: number
+  phase: 'confirm' | 'sent' | 'stuck' | 'forced'
+}
 
 // The pane's own state, kept across reloads. `collapsed` holds the pids of collapsed rows.
 export type PaneState = { sort: SortMode; collapsed: number[]; selected: Selected | null; stop: StopState | null }

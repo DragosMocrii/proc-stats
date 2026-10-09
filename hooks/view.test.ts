@@ -126,7 +126,7 @@ test('pruning forgets ended processes, keeps Claude Code and stops in flight', (
   expect(pruneState(kept, snapshot)).toEqual({ ...kept, collapsed: [11] })
   expect(pruneState(state({ selected: { pid: 99, startMs: 0 } }), snapshot).selected).toBeNull()
   expect(pruneState(state({ selected: { pid: 10, startMs: 0 } }), snapshot).selected).toEqual({ pid: 10, startMs: 0 })
-  const sent = { pid: 99, startMs: 0, label: 'gone', pids: [99], phase: 'sent' as const }
+  const sent = { pid: 99, startMs: 0, label: 'gone', pids: [99], starts: [0], checks: 0, phase: 'sent' as const }
   expect(pruneState(state({ stop: sent }), snapshot).stop).toEqual(sent)
   expect(pruneState(state({ stop: { ...sent, phase: 'confirm' } }), snapshot).stop).toBeNull()
   const unknown: Snapshot = { ...snapshot, children: null }
@@ -161,11 +161,11 @@ test('tree lines: a branch per sibling, a rail under ancestors with more to come
   expect(treePrefixes([0, 1, 2, 1, 0, 1].map(depth => ({ depth })))).toEqual(['├ ', '│ ├ ', '│ │ └ ', '│ └ ', '└ ', '  └ '])
 })
 
-test('a stuck stop clears when none of its processes is listed; sent and forced stay', () => {
+// A process left running outside the tree is no longer listed, so a stuck stop waits for f or n.
+test('a stuck stop stays when none of its processes is listed; so do sent and forced', () => {
   const snapshot = tree()
-  const stop = { pid: 99, startMs: 0, label: 'gone', pids: [99, 98], phase: 'stuck' as const }
-  expect(pruneState(state({ stop }), snapshot).stop).toBeNull()
-  expect(pruneState(state({ stop: { ...stop, pids: [99, 12] } }), snapshot).stop).toEqual({ ...stop, pids: [99, 12] })
+  const stop = { pid: 99, startMs: 0, label: 'gone', pids: [99, 98], starts: [0, 0], checks: 0, phase: 'stuck' as const }
+  expect(pruneState(state({ stop }), snapshot).stop).toEqual(stop)
   const forced = { ...stop, phase: 'forced' as const }
   expect(pruneState(state({ stop: forced }), snapshot).stop).toEqual(forced)
 })

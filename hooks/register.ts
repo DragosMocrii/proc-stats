@@ -11,7 +11,22 @@ import type { Timed } from './snapshot'
 import { readSettings } from './settings'
 import type { Settings } from './settings'
 import { statusLine } from './status'
-import { killArgv, outcomeText, STOP_CHECK_MS, stillListed, stopTargets } from './stop'
+import {
+  aliveFrom,
+  isAlreadyEnded,
+  killArgv,
+  linuxObserved,
+  macLivenessArgv,
+  outcomeText,
+  parseMacLiveness,
+  parseWindowsLiveness,
+  startsOf,
+  STOP_CHECK_MS,
+  STOP_CHECK_TRIES,
+  stopTargets,
+  windowsLivenessScript,
+} from './stop'
+import type { Observed } from './stop'
 import { cycleSort, EMPTY_PANE, isSelected, labelOf, pruneState, toggleCollapsed } from './view'
 import { childPids, linuxEngine, linuxProc, macReading, windowsReading } from './sampler'
 import type { Gathered } from './sampler'
@@ -123,31 +138,96 @@ const readProcesses = (
   }
 }
 
-// Sends the signal; a failure is the first line of what the command said, else null.
+// Sends the signal; a failure is the first line of what the command said, else null. A process that
+// had already ended is no failure.
 const signal = async ($: EngineInterface, platform: string, pids: number[], isForce: boolean) => {
   try {
     const { exitCode, stderr } = await $.process.run(killArgv(platform, pids, isForce))
+    if (exitCode === 0 || isAlreadyEnded(stderr)) return null
 
-    return exitCode === 0 ? null : stderr.trim().split('\n')[0] || `exit ${exitCode}`
+    return stderr.trim().split('\n')[0] || `exit ${exitCode}`
   } catch (error) {
     return error instanceof Error ? error.message : 'the command could not start'
   }
 }
 
-const setStop = ($: EngineInterface, stop: StopState | null) => update($, pane, state => ({ ...state, stop }))
+const toast = ($: EngineInterface, text: string) => $.ui.toast(text, { timeoutMs: TOAST_MS })
 
-// STOP_CHECK_MS after a signal: done when nothing is listed; else offer a force stop, or, after one, report.
+// The Linux start of one pid; null once it ended (its stat is gone, or it is a zombie).
+const linuxStart = async ($: EngineInterface, pid: number, uptime: string, wallMs: number) => {
+  try {
+    return linuxObserved(pid, await $.fs.read(`/proc/${pid}/stat`), uptime, wallMs)
+  } catch {
+    return null
+  }
+}
+
+// Which of a stop's targets still run, read per pid outside the tree, since one may have left it
+// (its parent ended); a pid now used by a process started later is not one of them. Null when the
+// liveness could not be read at all.
+const aliveTargets = async ($: EngineInterface, platform: string, stop: StopState): Promise<number[] | null> => {
+  const targets = stop.pids.map((pid, index) => ({ pid, startMs: stop.starts?.[index] ?? NaN }))
+  try {
+    let observed: Observed[]
+    if (platform === 'linux') {
+      const uptime = await $.fs.read('/proc/uptime')
+      const wallMs = await $.clock.now()
+      const starts = await Promise.all(stop.pids.map(pid => linuxStart($, pid, uptime, wallMs)))
+      observed = starts.filter(seen => seen !== null)
+    } else {
+      const { stdout } = await $.process.run(
+        platform === 'mac'
+          ? macLivenessArgv(stop.pids)
+          : ['powershell', '-NoProfile', '-Command', windowsLivenessScript(stop.pids)],
+      )
+      const wallMs = await $.clock.now()
+      observed = platform === 'mac' ? parseMacLiveness(stdout, wallMs) : parseWindowsLiveness(stdout, wallMs)
+    }
+
+    return aliveFrom(targets, observed)
+  } catch {
+    return null
+  }
+}
+
+const sameStop = (a: StopState | null | undefined, b: StopState) =>
+  a?.pid === b.pid && a.startMs === b.startMs && a.phase === b.phase
+
+// Replaces the stop only while it is still the one given, in the phase given: the person may have
+// dismissed it, or another press moved it on, meanwhile. True when it was replaced.
+const moveStop = async ($: EngineInterface, from: StopState, next: StopState | null) => {
+  let isMoved = false
+  await update($, pane, state => {
+    isMoved = sameStop(state.stop, from)
+
+    return isMoved ? { ...state, stop: next } : state
+  })
+
+  return isMoved
+}
+
+// STOP_CHECK_MS after a signal: done when none of the targets runs; else offer a force stop, or, after one,
+// report. Without a reading, or liveness, it tries again, up to STOP_CHECK_TRIES times, then offers force stop.
 const checkStop = async ($: EngineInterface) => {
   const stop = (await $.state.get(PANE_STATE)).value?.stop
+  if (!stop || (stop.phase !== 'sent' && stop.phase !== 'forced')) return
   const snapshot = (await $.state.get(READING)).value?.snapshot
-  if (!stop || !snapshot || (stop.phase !== 'sent' && stop.phase !== 'forced')) return
-  const remaining = stillListed(snapshot, stop.pids)
-  if (remaining.length > 0 && stop.phase === 'sent') {
-    await setStop($, { ...stop, phase: 'stuck' })
+  const alive = snapshot ? await aliveTargets($, snapshot.platform, stop) : null
+  if (alive === null) {
+    // A stop saved by an earlier version has no count.
+    const checks = Number.isFinite(stop.checks) ? stop.checks : 0
+    if (checks >= STOP_CHECK_TRIES) {
+      await moveStop($, stop, { ...stop, phase: 'stuck' })
+      return
+    }
+    if (await moveStop($, stop, { ...stop, checks: checks + 1 })) $.clock.after(STOP_CHECK_MS, () => void checkStop($))
     return
   }
-  $.ui.toast(outcomeText(stop, remaining))
-  await setStop($, null)
+  if (alive.length > 0 && stop.phase === 'sent') {
+    await moveStop($, stop, { ...stop, phase: 'stuck' })
+    return
+  }
+  if (await moveStop($, stop, null)) toast($, outcomeText(stop, alive))
 }
 
 // What the pane's presses do. Built here because they call $, which pane.tsx never receives.
@@ -171,46 +251,79 @@ const paneHandlers = ($: EngineInterface): PaneHandlers => ({
         $.ui.toast('proc-stats: that process is no longer listed')
         return
       }
-      await setStop($, { pid: row.pid, startMs: row.startMs, label: labelOf(row.command), pids, phase: 'confirm' })
+      const stop: StopState = {
+        pid: row.pid,
+        startMs: row.startMs,
+        label: labelOf(row.command),
+        pids,
+        starts: startsOf(snapshot!, pids),
+        checks: 0,
+        phase: 'confirm',
+      }
+      await update($, pane, state => (state.stop ? state : { ...state, stop }))
     })(),
+  // y: the targets again from this reading, then confirm → sent as one compare-and-set, so a second
+  // press (or one racing it) signals nothing.
   onConfirm: () =>
     void (async () => {
-      const stop = (await $.state.get(PANE_STATE)).value?.stop
       const snapshot = (await $.state.get(READING)).value?.snapshot
-      if (!stop || stop.phase !== 'confirm' || !snapshot) return
-      const pids = stopTargets(snapshot, stop)
-      if (!pids) {
-        $.ui.toast('proc-stats: that process is no longer listed')
-        await setStop($, null)
-        return
-      }
-      await setStop($, { ...stop, pids, phase: 'sent' })
-      const failure = await signal($, snapshot.platform, pids, false)
-      if (failure) $.ui.toast(`proc-stats: ${failure}`)
+      if (!snapshot) return
+      let won: StopState | null = null
+      let isGone = false
+      await update($, pane, state => {
+        won = null
+        isGone = false
+        if (state.stop?.phase !== 'confirm') return state
+        const pids = stopTargets(snapshot, state.stop)
+        if (!pids) {
+          isGone = true
+          return { ...state, stop: null }
+        }
+        won = { ...state.stop, pids, starts: startsOf(snapshot, pids), checks: 0, phase: 'sent' }
+
+        return { ...state, stop: won }
+      })
+      if (isGone) toast($, 'proc-stats: that process is no longer listed')
+      const sent = won as StopState | null
+      if (!sent) return
+      const failure = await signal($, snapshot.platform, sent.pids, false)
+      if (failure) toast($, `proc-stats: ${failure}`)
       $.clock.after(STOP_CHECK_MS, () => void checkStop($))
     })(),
+  // f: stuck → forced as one compare-and-set, then SIGKILL to exactly the targets still running,
+  // wherever they run now; with none left, the outcome.
   onForce: () =>
     void (async () => {
-      const stop = (await $.state.get(PANE_STATE)).value?.stop
       const snapshot = (await $.state.get(READING)).value?.snapshot
-      if (!stop || stop.phase !== 'stuck' || !snapshot) return
-      if (!snapshot.children) {
-        $.ui.toast('proc-stats: the process list is unavailable; try again')
+      if (!snapshot) {
+        toast($, 'proc-stats: no reading yet; try again')
         return
       }
-      const current = stopTargets(snapshot, stop)
-      const pids = current ? stop.pids.filter(pid => current.includes(pid)) : []
-      if (pids.length === 0) {
-        $.ui.toast(outcomeText(stop, []))
-        await setStop($, null)
+      let won: StopState | null = null
+      await update($, pane, state => {
+        won = null
+        if (state.stop?.phase !== 'stuck') return state
+        won = { ...state.stop, checks: 0, phase: 'forced' }
+
+        return { ...state, stop: won }
+      })
+      const forced = won as StopState | null
+      if (!forced) return
+      const alive = await aliveTargets($, snapshot.platform, forced)
+      if (alive === null) {
+        await moveStop($, forced, { ...forced, phase: 'stuck' })
+        toast($, 'proc-stats: could not check which processes still run; try again')
         return
       }
-      await setStop($, { ...stop, pids, phase: 'forced' })
-      const failure = await signal($, snapshot.platform, pids, true)
-      if (failure) $.ui.toast(`proc-stats: ${failure}`)
+      if (alive.length === 0) {
+        if (await moveStop($, forced, null)) toast($, outcomeText(forced, []))
+        return
+      }
+      const failure = await signal($, snapshot.platform, alive, true)
+      if (failure) toast($, `proc-stats: ${failure}`)
       $.clock.after(STOP_CHECK_MS, () => void checkStop($))
     })(),
-  onCancel: () => void setStop($, null),
+  onCancel: () => void update($, pane, state => ({ ...state, stop: null })),
 })
 
 // One loop feeds both views: the status line, and the reading the pane draws.
@@ -337,8 +450,7 @@ export const register: Register = (on, options) => {
   on('ui.focus', { requestId: PANE }, async ($, e, next) => {
     const moved = await next(e)
     if (e.element === undefined) {
-      const stop = (await $.state.get(PANE_STATE)).value?.stop
-      if (stop?.phase === 'confirm') await setStop($, null)
+      await update($, pane, state => (state.stop?.phase === 'confirm' ? { ...state, stop: null } : state))
     }
     const pid = e.element?.startsWith('pid:') ? Number(e.element.slice(4)) : null
     if (pid !== null && !('deny' in moved)) {

@@ -177,7 +177,12 @@ export const drawPane = (
           ))}
         </Box>
       )}
-      <Box flexDirection="row" columnGap={2} marginTop={1} paddingX={ROW_PADDING_X}>
+      {stop?.phase === 'confirm' && (
+        <Box marginTop={1} paddingX={ROW_PADDING_X}>
+          <Text>{confirmText(stop)}</Text>
+        </Box>
+      )}
+      <Box flexDirection="row" columnGap={2} marginTop={stop?.phase === 'confirm' ? 0 : 1} paddingX={ROW_PADDING_X}>
         {stop === null && (
           <Button key="sort" plain hotkey="s" onPress={handlers.onSort}>
             {`Sort: ${state.sort}`}
@@ -188,22 +193,21 @@ export const drawPane = (
             Stop process
           </Button>
         )}
-        {stop?.phase === 'confirm' && <Text>{confirmText(stop)}</Text>}
         {stop?.phase === 'confirm' && handlers.onConfirm && (
           <Button key="confirm" plain hotkey="y" onPress={handlers.onConfirm}>
             Stop
           </Button>
         )}
-        {(stop?.phase === 'confirm' || stop?.phase === 'stuck') && handlers.onCancel && (
-          <Button key="cancel" plain hotkey="n" onPress={handlers.onCancel}>
-            {stop.phase === 'confirm' ? 'Cancel' : 'Dismiss'}
-          </Button>
-        )}
         {(stop?.phase === 'sent' || stop?.phase === 'forced') && <Text dimColor>Stopping…</Text>}
-        {stop?.phase === 'stuck' && <Text>Still running after 3 s.</Text>}
+        {stop?.phase === 'stuck' && <Text>Still running.</Text>}
         {stop?.phase === 'stuck' && handlers.onForce && (
           <Button key="force" plain hotkey="f" onPress={handlers.onForce}>
             Force stop
+          </Button>
+        )}
+        {stop && handlers.onCancel && (
+          <Button key="cancel" plain hotkey="n" onPress={handlers.onCancel}>
+            {stop.phase === 'confirm' ? 'Cancel' : 'Dismiss'}
           </Button>
         )}
       </Box>

@@ -15,3 +15,7 @@ export const proc = (pid: number, ppid: number, extra: Partial<Proc> = {}): Proc
 })
 
 export const engine = { rssKb: 484 * MB, peakKb: 530 * MB, cpuSeconds: 1, uptimeSeconds: 60 }
+
+// /proc/<pid>/stat with its state and start (clock ticks since boot); the name holds parentheses.
+export const statLine = (pid: number, state: string, startTicks: number) =>
+  `${pid} (my (odd) name) ${state} 1 ${Array.from({ length: 17 }, () => '0').join(' ')} ${startTicks} 0 0`

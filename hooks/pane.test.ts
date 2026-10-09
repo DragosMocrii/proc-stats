@@ -1,7 +1,9 @@
-import { expect, test } from 'claude-code/testing'
+import type { On } from 'claude-code'
+import { expect, mock, test } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 
-import type { PaneState } from '../types'
-import { engine, MB, proc } from './fixtures'
+import type { PaneState, StopState } from '../types'
+import { engine, MB, proc, statLine } from './fixtures'
 import { commandCell, paneColumns } from './pane'
 import { buildSnapshot } from './snapshot'
 import type { Timed } from './snapshot'
@@ -124,6 +126,8 @@ test('k asks before stopping; n cancels; Claude Code offers no stop', async ($, 
 })
 
 test('y signals once, even pressed twice', async ($, on) => {
+  // Holds the check, which would otherwise read this machine's /proc.
+  mock.clock(on)
   const calls: (readonly string[])[] = []
   on('state.get', { plugin: 'proc-stats', key: 'reading' }, () => ({ value: { value: { snapshot }, version: 1 } }))
   // Answers without calling next: nothing real runs.
@@ -150,6 +154,7 @@ test('y signals once, even pressed twice', async ($, on) => {
 })
 
 test('a pid reused between k and y stops nothing and clears the stop', async ($, on) => {
+  mock.clock(on)
   const calls: (readonly string[])[] = []
   let current = snapshot
   on('state.get', { plugin: 'proc-stats', key: 'reading' }, () => ({ value: { value: { snapshot: current }, version: 1 } }))
@@ -173,5 +178,222 @@ test('a pid reused between k and y stops nothing and clears the stop', async ($,
   expect(calls).toEqual([])
   expect(await ui.find({ key: 'confirm' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Stopping/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+// What a command answers; nothing real runs.
+const answer = (exitCode = 0, stderr = '') => ({
+  value: { exitCode, stdout: '', stderr, isStdoutTruncated: false, isStderrTruncated: false },
+})
+const READING_KEY = { plugin: 'proc-stats', key: 'reading' } as const
+const startOf = (pid: number) => snapshot.children!.find(row => row.pid === pid)!.startMs
+const UPTIME = '100000.00 0.00'
+
+// The session around a mounted pane: a mocked clock, a reading the test swaps, every command
+// recorded and answered, toasts recorded, and /proc/<pid>/stat answering for the pids in `running`
+// (pid → start ms); any other stat is missing, as for an ended process.
+const session = async ($: Engine, on: On) => {
+  const clock = mock.clock(on, { now: now.wallMs })
+  const world = {
+    clock,
+    reading: { snapshot } as { snapshot?: typeof snapshot; error?: string },
+    calls: [] as (readonly string[])[],
+    toasts: [] as string[],
+    running: new Map<number, number>(),
+    exit: (_argv: readonly string[]) => answer(),
+    // The stop as the pane last read it.
+    stop: null as StopState | null,
+  }
+  on('state.get', { plugin: 'proc-stats', key: 'pane' }, async (_$, e, next) => {
+    const read = await next(e)
+    // The answer wraps the read: { value: { value, version } }.
+    world.stop = (read as { value?: { value?: PaneState } }).value?.value?.stop ?? null
+
+    return read
+  })
+  on('state.get', READING_KEY, () => ({ value: { value: world.reading, version: 1 } }))
+  on('process.run', (_$, e) => {
+    world.calls.push(e.argv)
+
+    return world.exit(e.argv)
+  })
+  on('fs.read', (_$, e) => {
+    if (e.path === '/proc/uptime') return { value: UPTIME }
+    const pid = Number(/^\/proc\/(\d+)\/stat$/.exec(e.path)?.[1])
+    const start = world.running.get(pid)
+    if (start === undefined) throw new Error(`ENOENT: ${e.path}`)
+    // Ticks since boot that place the start where the reading placed it.
+    const bootMs = clock.now() - Number(UPTIME.split(' ')[0]) * 1000
+
+    return { value: statLine(pid, 'S', Math.round(((start - bootMs) / 1000) * 100)) }
+  })
+  on('ui.toast', (_$, e) => {
+    world.toasts.push(e.text)
+
+    return { value: undefined }
+  })
+  // The ring moves wherever the pane asks.
+  on('ui.focus', () => ({}))
+  const ui = await $.ui.mount({
+    plugin: 'proc-stats',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'proc-stats',
+    props: { ...PANE_PROPS, bodyColumns: 80 },
+  })
+  // The stop's phase as the footer shows it; null with no stop.
+  const phase = async () =>
+    (await ui.find({ key: 'force' }))
+      ? 'stuck'
+      : (await ui.find({ type: 'Text', text: /Stopping/ }))
+        ? 'sent'
+        : (await ui.find({ key: 'confirm' }))
+          ? 'confirm'
+          : (await ui.find({ key: 'cancel' }))
+            ? 'other'
+            : null
+
+  return { world, ui, phase }
+}
+
+test('a process left running outside the tree: stuck at the check; f kills only the live ones', async ($, on) => {
+  const { world, ui, phase } = await session($, on)
+  await ui.press({ key: 'pid:11' })
+  await ui.press({ key: 'stop' })
+  await ui.press({ key: 'confirm' })
+  expect(world.calls).toEqual([['kill', '-TERM', '12', '11']])
+  // 11 ended; 12 runs on outside the tree, which the reading no longer lists.
+  world.running.set(12, startOf(12))
+  world.reading = { snapshot: { ...snapshot, children: [], childCount: 0 } }
+  await world.clock.advance(3000)
+  expect(await phase()).toBe('stuck')
+  expect(await ui.find({ key: 'force' })).toBeDefined()
+  // 11's pid now belongs to another process, started later: never signalled.
+  world.running.set(11, startOf(11) + 60_000)
+  await ui.press({ key: 'force' })
+  expect(world.calls).toEqual([['kill', '-TERM', '12', '11'], ['kill', '-KILL', '12']])
+  world.running.delete(12)
+  await world.clock.advance(3000)
+  expect(await phase()).toBeNull()
+  expect(world.toasts.some(text => text.startsWith('Stopped cmd11 (pid 11)'))).toBe(true)
+  await ui.unmount()
+})
+
+test('stuck when a target still runs; f with none left alive signals nothing', async ($, on) => {
+  const { world, ui, phase } = await session($, on)
+  await ui.press({ key: 'pid:12' })
+  await ui.press({ key: 'stop' })
+  await ui.press({ key: 'confirm' })
+  world.running.set(12, startOf(12))
+  await world.clock.advance(3000)
+  expect(await phase()).toBe('stuck')
+  world.running.delete(12)
+  await ui.press({ key: 'force' })
+  expect(world.calls).toEqual([['kill', '-TERM', '12']])
+  expect(await phase()).toBeNull()
+  expect(world.toasts.some(text => text.startsWith('Stopped python3 -c x (pid 12)'))).toBe(true)
+  await ui.unmount()
+})
+
+test('with no reading the check tries again, ten times, then offers force stop', async ($, on) => {
+  const { world, ui, phase } = await session($, on)
+  await ui.press({ key: 'pid:12' })
+  await ui.press({ key: 'stop' })
+  await ui.press({ key: 'confirm' })
+  world.reading = { error: 'cannot read' }
+  for (let check = 1; check <= 10; check++) {
+    await world.clock.advance(3000)
+    await ui.redraw()
+    expect(world.stop).toMatchObject({ phase: 'sent', checks: check })
+  }
+  await world.clock.advance(3000)
+  await ui.redraw()
+  expect(world.stop?.phase).toBe('stuck')
+  world.reading = { snapshot }
+  await ui.redraw()
+  expect(await ui.find({ key: 'force' })).toBeDefined()
+  expect(await ui.find({ key: 'cancel' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('n dismisses a stop in every phase after the confirmation', async ($, on) => {
+  const { world, ui, phase } = await session($, on)
+  await ui.press({ key: 'pid:12' })
+  await ui.press({ key: 'stop' })
+  await ui.press({ key: 'confirm' })
+  expect(await ui.find({ type: 'Text', text: /Stopping/ })).toBeDefined()
+  expect((await ui.find({ key: 'cancel' }))?.text).toContain('Dismiss')
+  await ui.press({ key: 'cancel' })
+  expect(await phase()).toBeNull()
+  // The check already scheduled finds nothing to do and brings nothing back.
+  world.running.set(12, startOf(12))
+  await world.clock.advance(3000)
+  expect(await phase()).toBeNull()
+  expect(await ui.find({ key: 'stop' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('y and f pressed twice at once signal once each', async ($, on) => {
+  const { world, ui, phase } = await session($, on)
+  await ui.press({ key: 'pid:12' })
+  await ui.press({ key: 'stop' })
+  await Promise.allSettled([ui.press({ key: 'confirm' }), ui.press({ key: 'confirm' })])
+  expect(world.calls).toEqual([['kill', '-TERM', '12']])
+  world.running.set(12, startOf(12))
+  await world.clock.advance(3000)
+  expect(await phase()).toBe('stuck')
+  await Promise.allSettled([ui.press({ key: 'force' }), ui.press({ key: 'force' })])
+  expect(world.calls).toEqual([['kill', '-TERM', '12'], ['kill', '-KILL', '12']])
+  await ui.unmount()
+})
+
+test('a signal that finds the process already ended is no failure; another error is shown', async ($, on) => {
+  const { world, ui } = await session($, on)
+  world.exit = () => answer(1, 'kill: (12): No such process\n')
+  await ui.press({ key: 'pid:12' })
+  await ui.press({ key: 'stop' })
+  await ui.press({ key: 'confirm' })
+  expect(world.toasts).toEqual([])
+  await ui.press({ key: 'cancel' })
+  world.exit = () => answer(1, 'kill: (12): Operation not permitted\n')
+  await ui.press({ key: 'stop' })
+  await ui.press({ key: 'confirm' })
+  expect(world.toasts).toEqual(['proc-stats: kill: (12): Operation not permitted'])
+  await ui.unmount()
+})
+
+test('the focus ring on a row selects it; leaving the pane cancels a confirmation', async ($, on) => {
+  const { ui, phase } = await session($, on)
+  const focus = (element?: string) =>
+    $.ui.focus({ component: 'Pane', requestId: 'proc-stats', origin: { kind: 'person' }, ...(element ? { element, plugin: 'proc-stats' } : {}) })
+  expect(await ui.find({ type: 'Text', text: /pid 12 · parent 11/ })).toBeUndefined()
+  expect(await focus('pid:12')).toEqual({})
+  expect(await ui.find({ type: 'Text', text: /pid 12 · parent 11/ })).toBeDefined()
+  await ui.press({ key: 'stop' })
+  expect(await phase()).toBe('confirm')
+  await focus()
+  expect(await phase()).toBeNull()
+  expect(await ui.find({ key: 'confirm' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('macOS: liveness from one ps call outside the tree; f kills the survivor', async ($, on) => {
+  const { world, ui, phase } = await session($, on)
+  world.reading = { snapshot: { ...snapshot, platform: 'mac' } }
+  await ui.redraw()
+  // ps lists 12, started where the reading placed it: 100 s before 5000, so 01:43 old at 8000.
+  world.exit = argv => (argv[0] === 'ps' ? { value: { ...answer().value, stdout: '   12      01:43\n' } } : answer())
+  await ui.press({ key: 'pid:12' })
+  await ui.press({ key: 'stop' })
+  await ui.press({ key: 'confirm' })
+  await world.clock.advance(3000)
+  expect(await phase()).toBe('stuck')
+  await ui.press({ key: 'force' })
+  expect(world.calls).toEqual([
+    ['kill', '-TERM', '12'],
+    ['ps', '-o', 'pid=,etime=', '-p', '12'],
+    ['ps', '-o', 'pid=,etime=', '-p', '12'],
+    ['kill', '-KILL', '12'],
+  ])
   await ui.unmount()
 })

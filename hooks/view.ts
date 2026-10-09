@@ -1,6 +1,6 @@
 // The pane's rows as text: labels, cells, tree or sorted order, collapsing, selection and details.
 
-import type { PaneState, ProcRow, Selected, Snapshot, SortMode, StopState } from '../types'
+import type { PaneState, ProcRow, Selected, Snapshot, SortMode } from '../types'
 import { formatBytes, formatDuration, formatPercent } from './format'
 
 export const EMPTY_PANE: PaneState = { sort: 'tree', collapsed: [], selected: null, stop: null }
@@ -156,20 +156,16 @@ export const cycleSort = (sort: SortMode): SortMode => SORTS[(SORTS.indexOf(sort
 export const toggleCollapsed = (collapsed: number[], pid: number) =>
   collapsed.includes(pid) ? collapsed.filter(each => each !== pid) : [...collapsed, pid]
 
-// Forgets what names an ended process. Claude Code's row stays selectable; a stop already sent
-// is kept for its check; an unreadable table changes nothing.
+// Forgets what names an ended process. Claude Code's row stays selectable; a stop past its confirmation
+// is kept (a process it left running may run outside the tree, unlisted), cleared by f or n; an unreadable
+// table changes nothing.
 export const pruneState = (state: PaneState, snapshot: Snapshot): PaneState => {
   const rows = snapshot.children
   if (rows === null) return state
   const isListed = (chosen: Selected) => rows.some(row => isSelected(row, chosen))
   const selected =
     state.selected && (state.selected.pid === snapshot.pid || isListed(state.selected)) ? state.selected : null
-  const isStopListed = (stop: StopState) =>
-    stop.phase === 'stuck' ? stop.pids.some(pid => rows.some(row => row.pid === pid)) : isListed(stop)
-  const stop =
-    state.stop && (state.stop.phase === 'sent' || state.stop.phase === 'forced' || isStopListed(state.stop))
-      ? state.stop
-      : null
+  const stop = state.stop && (state.stop.phase !== 'confirm' || isListed(state.stop)) ? state.stop : null
   const collapsed = state.collapsed.filter(pid => rows.some(row => row.pid === pid))
 
   return { ...state, selected, collapsed, stop }
