@@ -4,7 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { AlertState, History, Origin, OriginCall, Origins, PaneState, Point, Reading, SessionMark, StopState } from '../types'
 import { historyCapacity, pointOf, pointSpacingMs, pushPoint, shouldRecord } from './history'
 import { EMPTY_ALERTS, markerFor, stepAlerts, worse } from './alerts'
-import { candidatesOf, environHasMark, macMarkedPids, oursOf, rememberMarks, startedFrom, unreadOf } from './detached'
+import { candidatesOf, environHasMark, macListedPids, macMarkedPids, oursOf, rememberMarks, startedFrom, unreadOf } from './detached'
 import type { MarkCache } from './detached'
 import { CALL_TTL_MS, EMPTY_ORIGINS, matchOrigins, UNNAMED_AGENT } from './origin'
 import { drawPane } from './pane'
@@ -137,9 +137,14 @@ const macDetached = async ($: EngineInterface, finder: Finder, rows: string[][],
   if (unread.length > 0 && wallMs - finder.scannedAt >= MAC_SCAN_MS) {
     finder.scannedAt = wallMs
     try {
-      const { stdout } = await $.process.run(['ps', 'eww', '-o', 'pid=,command=', '-p', unread.map(each => each.pid).join(',')])
+      const { stdout, isStdoutTruncated } = await $.process.run(['ps', 'eww', '-o', 'pid=,command=', '-p', unread.map(each => each.pid).join(',')])
       const marked = macMarkedPids(stdout, finder.mark.id)
-      read = unread.map(each => ({ ...each, isOurs: marked.has(each.pid) }))
+      const listed = macListedPids(stdout)
+      // A pid missing from the output stays unread (the command may have failed or been cut); with cut
+      // output only a pid found marked is certain.
+      read = unread
+        .filter(each => marked.has(each.pid) || (!isStdoutTruncated && listed.has(each.pid)))
+        .map(each => ({ ...each, isOurs: marked.has(each.pid) }))
     } catch {
       // Read again at the next scan.
     }

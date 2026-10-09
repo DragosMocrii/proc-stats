@@ -76,6 +76,7 @@ Answer `y` to add the marketplace, then choose a scope (user scope loads it in e
 ## Limits
 
 - A detached process is found only if it keeps the environment it started with (a program that clears it, such as `env -i`, is not found), and only on Linux and macOS.
+- A program a command opens that outlives it, such as a browser or editor started by `xdg-open` or `code .`, carries the session's mark and is counted as a detached process.
 - A command that starts and ends between two readings is not counted.
 - `+ ?` means the process table could not be read (for example no `ps` in a minimal container).
 

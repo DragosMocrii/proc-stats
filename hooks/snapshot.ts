@@ -11,8 +11,9 @@ export const MAX_ROWS = 500
 export type Timed = { engine: Sample; children?: Proc[]; detached?: Proc[]; wallMs: number }
 
 // CPU a process spent since the last reading, and as a share of one core. A pid
-// whose process is younger than the one seen before was reused: a new process,
-// counted whole over the time it has run.
+// whose process is younger than the one seen before was reused: a new process.
+// One first seen (new, reused, or found late by a slow scan) shows its average over its
+// life; only the share of its CPU that falls in this reading's window counts as delta.
 export const procCpu = (now: Proc, was: Proc | undefined, elapsed: number) => {
   const isSame = was !== undefined && now.uptimeSeconds >= was.uptimeSeconds - 1
   if (isSame) {
@@ -20,9 +21,9 @@ export const procCpu = (now: Proc, was: Proc | undefined, elapsed: number) => {
 
     return { delta, percent: (delta / elapsed) * 100 }
   }
-  const window = Math.max(1, Math.min(elapsed, now.uptimeSeconds))
+  const window = Math.max(1, now.uptimeSeconds)
 
-  return { delta: now.cpuSeconds, percent: (now.cpuSeconds / window) * 100 }
+  return { delta: now.cpuSeconds * Math.min(1, elapsed / window), percent: (now.cpuSeconds / window) * 100 }
 }
 
 // Depth-first from the engine, each level by pid.

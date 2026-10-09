@@ -133,7 +133,7 @@ export const drawPane = (
   // In the tree, the detached group follows a heading of its own.
   const firstDetached = state.sort === 'tree' ? views.findIndex(view => view.row.detached) : -1
   const detachedHeading = (
-    <Box paddingX={ROW_PADDING_X}>
+    <Box key="detached-heading" paddingX={ROW_PADDING_X}>
       <Text bold dimColor>{`${pidCell('')}Detached`}</Text>
     </Box>
   )

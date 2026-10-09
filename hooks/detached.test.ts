@@ -1,9 +1,14 @@
 import { expect, test } from 'claude-code/testing'
 
-import { candidatesOf, environHasMark, macMarkedPids, oursOf, rememberMarks, startedFrom, unreadOf } from './detached'
+import { candidatesOf, environHasMark, macListedPids, macMarkedPids, oursOf, rememberMarks, startedFrom, unreadOf } from './detached'
 import type { MarkCache } from './detached'
 
 const ID = 'abc-123'
+
+test('macOS: the pids that lead a line are the ones listed', () => {
+  expect(macListedPids(` 40 node a HOME=/x\n41 sleep 60\r\n\n  junk\n`)).toEqual(new Set([40, 41]))
+  expect(macListedPids('')).toEqual(new Set())
+})
 
 test('Linux: the mark is one whole environment entry', () => {
   expect(environHasMark(`HOME=/root\0PROC_STATS_SESSION=${ID}\0PATH=/bin\0`, ID)).toBe(true)

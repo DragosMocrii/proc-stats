@@ -28,6 +28,17 @@ export const macMarkedPids = (stdout: string, id: string) => {
   return pids
 }
 
+// macOS: the pids that lead a line of that output, whether marked or not.
+export const macListedPids = (stdout: string) => {
+  const pids = new Set<number>()
+  for (const line of stdout.split(/\r?\n/)) {
+    const pid = Number(line.trim().split(/\s+/)[0])
+    if (Number.isInteger(pid) && pid > 0) pids.add(pid)
+  }
+
+  return pids
+}
+
 // The processes that could be ours: started since the session began (with two seconds' slack) and not
 // excluded (Claude Code, what runs under it, and the reader itself).
 export const candidatesOf = (started: Started[], excluded: Set<number>, sessionStartMs: number) =>

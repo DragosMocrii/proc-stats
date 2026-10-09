@@ -86,11 +86,19 @@ test('Linux: the session is marked, and a process carrying the mark outside Clau
 test('a reload keeps the session mark it made', async ($, on) => {
   const { clock, marks } = startSession(on, 'Linux', () => '99\n 10 1 05:00\n')
   procFiles(on, { 10: 1 }, {}, [], [])
+  const stored: unknown[] = []
+  on('state.set', { plugin: 'proc-stats', key: 'session' } as const, (_$, e, next) => {
+    stored.push(e.value)
+    return next(e)
+  })
   await $.session.start(START)
+  await clock.advance(60_000)
   await $.session.start(START)
   await clock.settle()
   expect(marks.length).toBe(2)
   expect(marks[1]).toBe(marks[0])
+  expect(stored.length).toBeGreaterThan(0)
+  for (const value of stored) expect((value as { startMs: number }).startMs).toBe(NOW)
 })
 
 test('the session mark could not be set: no detached processes, and the reading says why', async ($, on) => {
@@ -103,6 +111,28 @@ test('the session mark could not be set: no detached processes, and the reading 
   expect(snapshot?.detachedOff).toBe('Detached processes are not tracked: the session mark could not be set.')
   expect(snapshot?.detachedCount).toBe(0)
   expect(reads.some(path => path.endsWith('/environ'))).toBe(false)
+})
+
+test('macOS: a pid left out of the scan stays unread and is scanned again', async ($, on) => {
+  const scans: string[] = []
+  const timer: { now?: () => number } = {}
+  const { clock, readings } = startSession(on, 'Darwin', (argv, marks) => {
+    if (!argv.startsWith('ps eww')) {
+      // 40 and 41 started when the session did, so their elapsed time grows with the clock.
+      const age = `00:${String(Math.round(((timer.now?.() ?? NOW) - NOW) / 1000)).padStart(2, '0')}`
+      return `99\n 10 1 1024 0:01.00 05:00 claude\n 40 1 2048 0:00.50 ${age} node server.js\n 41 1 512 0:00.00 ${age} sleep 60\n 99 10 100 0:00.00 00:00 ps\n`
+    }
+    scans.push(argv)
+    return scans.length === 1 ? ' 41 sleep 60 HOME=/Users/me\n' : ` 40 node server.js HOME=/Users/me ${marks[0]}\n`
+  })
+  timer.now = clock.now
+  await $.session.start(START)
+  await clock.settle()
+  await clock.advance(2000)
+  expect(readings.at(-1)?.snapshot?.children?.map(row => row.pid)).toEqual([])
+  await clock.advance(10_000)
+  expect(readings.at(-1)?.snapshot?.children?.map(row => [row.pid, row.detached ?? false])).toEqual([[40, true]])
+  expect(scans).toEqual(['ps eww -o pid=,command= -p 40,41', 'ps eww -o pid=,command= -p 40'])
 })
 
 test('macOS: one ps eww over the new processes finds the marked ones', async ($, on) => {

@@ -60,6 +60,18 @@ test('children unreadable now: their CPU is unknown, not zero', () => {
   expect(buildSnapshot('linux', 10, now, before).childCpuPercent).toBeNull()
 })
 
+test('process CPU: first seen late, its average over its life, and the share in this window', () => {
+  expect(procCpu(proc(7, 1, { cpuSeconds: 12, uptimeSeconds: 12 }), undefined, 2)).toEqual({ delta: 2, percent: 100 })
+})
+
+test('snapshot: a detached process found late is not charged its whole life in one reading', () => {
+  const before: Timed = { engine, children: [], detached: [], wallMs: 0 }
+  const now: Timed = { engine, children: [], detached: [proc(41, 1, { cpuSeconds: 12, uptimeSeconds: 12 })], wallMs: 2000 }
+  const snapshot = buildSnapshot('linux', 10, now, before)
+  expect(snapshot.children?.map(row => [row.pid, row.cpuPercent])).toEqual([[41, 100]])
+  expect(snapshot.detachedCpuPercent).toBe(100)
+})
+
 test('forest order: each process whose parent is not among them is a root', () => {
   const ordered = forestOrder([proc(42, 40), proc(41, 1), proc(43, 1), proc(44, 41)])
   expect(ordered.map(({ proc, depth }) => [proc.pid, proc.ppid, depth])).toEqual([
