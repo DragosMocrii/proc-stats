@@ -76,8 +76,9 @@ export type PaneState = { sort: SortMode; collapsed: number[]; selected: Selecte
 // Who started a process: the tool, and the subagent whose call it was (null for the main conversation).
 export type Origin = { tool: string; agent: { type: string; description: string } | null }
 
-// A Bash or Monitor call recorded before it ran: its exact command, and when (ms since the epoch).
-export type OriginCall = Origin & { command: string; at: number }
+// A Bash or Monitor call recorded before it ran: its tool_use_id, its exact command (as a PreToolUse rewrite
+// left it), when (ms since the epoch), and when it settled (null while it runs).
+export type OriginCall = Origin & { id: string; command: string; at: number; settledAt: number | null }
 
 // Calls not yet matched to a process, and the origins of listed processes by pid (with their start).
 export type Origins = { calls: OriginCall[]; byPid: Record<string, Origin & { startMs: number }> }

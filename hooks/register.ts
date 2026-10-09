@@ -1,10 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AlertState, History, OriginCall, Origins, PaneState, Point, Reading, StopState } from '../types'
+import type { AlertState, History, Origin, OriginCall, Origins, PaneState, Point, Reading, StopState } from '../types'
 import { historyCapacity, pointOf, pointSpacingMs, pushPoint, shouldRecord } from './history'
 import { EMPTY_ALERTS, markerFor, stepAlerts, worse } from './alerts'
-import { EMPTY_ORIGINS, matchOrigins } from './origin'
+import { CALL_TTL_MS, EMPTY_ORIGINS, matchOrigins, UNNAMED_AGENT } from './origin'
 import { drawPane } from './pane'
 import type { PaneHandlers } from './pane'
 import { buildSnapshot, capRows } from './snapshot'
@@ -417,21 +417,76 @@ const startSampling = async ($: EngineInterface, settings: Settings) => {
   }
 }
 
-// Records a Bash or Monitor call before it runs, with the subagent whose call it is. Never throws:
-// a failure here costs the origin only, never the call.
-const recordCall = async ($: EngineInterface, tool: string, command: string | undefined, agentId: string | undefined) => {
-  if (!command) return
+// The agent of a call: the listed subagent, an unnamed agent when the listing does not name it
+// (or cannot be read), or null for the main conversation.
+const agentOf = async ($: EngineInterface, agentId: string | undefined): Promise<Origin['agent']> => {
+  if (!agentId) return null
   try {
-    const listed = agentId ? (await $.agent.list()).find(agent => agent.id === agentId) : undefined
-    const call: OriginCall = {
-      tool,
-      agent: listed ? { type: listed.type, description: listed.description } : null,
-      command,
-      at: await $.clock.now(),
-    }
-    await update($, origins, kept => ({ ...kept, calls: [...kept.calls, call] }))
+    const listed = (await $.agent.list()).find(agent => agent.id === agentId)
+    if (listed) return { type: listed.type, description: listed.description }
+  } catch {
+    // Unnamed below.
+  }
+
+  return { ...UNNAMED_AGENT }
+}
+
+// Records a Bash or Monitor call before it runs, with the agent whose call it is, and drops calls
+// past the TTL. Never throws: a failure here costs the origin only, never the call.
+const recordCall = async ($: EngineInterface, tool: string, e: { tool_use_id: string; command?: unknown; agentId?: string }) => {
+  if (typeof e.command !== 'string' || !e.command) return
+  try {
+    const at = await $.clock.now()
+    const call: OriginCall = { id: e.tool_use_id, tool, agent: await agentOf($, e.agentId), command: e.command, at, settledAt: null }
+    await update($, origins, kept => ({ ...kept, calls: [...kept.calls.filter(each => at - each.at <= CALL_TTL_MS), call] }))
   } catch {
     // The process will show without an origin.
+  }
+}
+
+// Marks a recorded call settled: the tool returned. Never throws.
+const settleCall = async ($: EngineInterface, id: string) => {
+  try {
+    const settledAt = await $.clock.now()
+    await update($, origins, kept =>
+      kept.calls.some(each => each.id === id)
+        ? { ...kept, calls: kept.calls.map(each => (each.id === id ? { ...each, settledAt } : each)) }
+        : kept,
+    )
+  } catch {
+    // The call stays running until its TTL.
+  }
+}
+
+// The command a recorded call runs, as the check sees it: after any PreToolUse rewrite. Never throws.
+const checkCall = async ($: EngineInterface, e: { tool_use_id?: string; input: unknown }) => {
+  const id = e.tool_use_id
+  const command = (e.input as { command?: unknown } | null)?.command
+  if (!id || typeof command !== 'string' || !command) return
+  try {
+    const kept = (await $.state.get(ORIGINS)).value ?? EMPTY_ORIGINS
+    if (!kept.calls.some(each => each.id === id && each.command !== command)) return
+    await update($, origins, current => ({
+      ...current,
+      calls: current.calls.map(each => (each.id === id ? { ...each, command } : each)),
+    }))
+  } catch {
+    // The call keeps the command it was recorded with.
+  }
+}
+
+// Runs a Bash or Monitor call: recorded before, settled after, the call and its answer unchanged.
+const traceCall = async <E extends { tool_use_id: string; command?: unknown; agentId?: string }, R>(
+  $: EngineInterface,
+  tool: string,
+  e: E,
+  next: (e: E) => Promise<R>,
+): Promise<R> => {
+  await recordCall($, tool, e)
+  try {
+    return await next(e)
+  } finally {
+    await settleCall($, e.tool_use_id)
   }
 }
 
@@ -456,14 +511,19 @@ export const register: Register = (on, options) => {
   })
 
   // Where processes come from: each Bash and Monitor call is recorded before it runs.
-  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
-    await recordCall($, 'Bash', e.command, e.agentId)
+  on('tool.call', { tool: 'Bash' }, ($, e, next) => traceCall($, 'Bash', e, next)).catch(($, e, next) => next(e))
+
+  on('tool.call', { tool: 'Monitor' }, ($, e, next) => traceCall($, 'Monitor', e, next)).catch(($, e, next) => next(e))
+
+  // A PreToolUse hook may rewrite the command; the check sees it as it will run.
+  on('tool.check', { tool: 'Bash' }, async ($, e, next) => {
+    await checkCall($, e)
 
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  on('tool.call', { tool: 'Monitor' }, async ($, e, next) => {
-    await recordCall($, 'Monitor', e.command, e.agentId)
+  on('tool.check', { tool: 'Monitor' }, async ($, e, next) => {
+    await checkCall($, e)
 
     return next(e)
   }).catch(($, e, next) => next(e))

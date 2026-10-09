@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { OriginCall, Origins } from '../types'
 import { engine, proc } from './fixtures'
-import { CALL_TTL_MS, EMPTY_ORIGINS, MAX_LEAD_MS, matchOrigins, originDetail, originLabel, originOf } from './origin'
+import { CALL_TTL_MS, EMPTY_ORIGINS, matchOrigins, originDetail, originLabel, originOf, originText } from './origin'
 import { buildSnapshot } from './snapshot'
 
 const wrap = (inner: string) =>
@@ -18,10 +18,12 @@ const reading = (wallMs: number, rows: [number, string, number][]) =>
   )
 
 const call = (command: string, at: number, extra: Partial<OriginCall> = {}): OriginCall => ({
+  id: `toolu_${command}_${at}`,
   tool: 'Bash',
   agent: null,
   command,
   at,
+  settledAt: null,
   ...extra,
 })
 
@@ -86,20 +88,55 @@ test('looking up, labelling and describing an origin', () => {
   expect(originDetail(sub)).toBe('started by Bash in subagent code-reviewer: Review the diff')
 })
 
-test('a call only starts processes within MAX_LEAD_MS after it; the unmatched call stays', () => {
-  const snapshot = reading(100_000, [[11, 'ls', 5]])
-  const stale = matchOrigins(origins([call('ls', 50_000)]), snapshot, 100_000)
-  expect(stale.byPid).toEqual({})
-  expect(stale.calls.length).toBe(1)
-  const near = matchOrigins(origins([call('ls', 90_000)]), snapshot, 100_000)
-  expect(near.byPid['11']?.tool).toBe('Bash')
-  expect(MAX_LEAD_MS).toBe(10_000)
+test('a call still running matches a process started long after it (a permission prompt)', () => {
+  const snapshot = reading(105_000, [[11, 'ls', 5]])
+  const next = matchOrigins(origins([call('ls', 40_000)]), snapshot, 105_000)
+  expect(next.byPid['11']?.tool).toBe('Bash')
+  expect(next.calls).toEqual([])
 })
 
-test('the lead limit is inclusive of the start tolerance', () => {
+test('a settled call never matches a process started after it settled, beyond the tolerance', () => {
   const snapshot = reading(100_000, [[11, 'ls', 5]])
-  expect(matchOrigins(origins([call('ls', 95_000 - MAX_LEAD_MS - 2_000)]), snapshot, 100_000).byPid['11']).toBeDefined()
-  expect(matchOrigins(origins([call('ls', 95_000 - MAX_LEAD_MS - 2_001)]), snapshot, 100_000).byPid).toEqual({})
+  expect(matchOrigins(origins([call('ls', 90_000, { settledAt: 93_000 })]), snapshot, 100_000).byPid['11']).toBeDefined()
+  const late = matchOrigins(origins([call('ls', 90_000, { settledAt: 92_999 })]), snapshot, 100_000)
+  expect(late.byPid).toEqual({})
+  expect(late.calls).toEqual([])
+})
+
+test('a settled unmatched call is gone after one reading; one settled within the tolerance waits a reading', () => {
+  const snapshot = reading(100_000, [])
+  const settled = call('ls', 90_000, { settledAt: 97_999 })
+  expect(matchOrigins(origins([settled]), snapshot, 100_000).calls).toEqual([])
+  const fresh = call('ls', 90_000, { settledAt: 98_000 })
+  expect(matchOrigins(origins([fresh]), snapshot, 100_000).calls).toEqual([fresh])
+  const running = call('ls', 90_000)
+  expect(matchOrigins(origins([running]), snapshot, 100_000).calls).toEqual([running])
+})
+
+test('settled parallel calls with the same command still go in start order', () => {
+  const snapshot = reading(100_000, [[12, 'npm test', 3], [11, 'npm test', 5]])
+  const first = call('npm test', 94_000, { tool: 'Monitor', settledAt: 99_000 })
+  const second = call('npm test', 96_000, { settledAt: 99_500 })
+  const next = matchOrigins(origins([second, first]), snapshot, 100_000)
+  expect(next.byPid['11']?.tool).toBe('Monitor')
+  expect(next.byPid['12']?.tool).toBe('Bash')
+  expect(next.calls).toEqual([])
+})
+
+test('an agent no listing names: labelled agent, never the main conversation', () => {
+  const unnamed = { tool: 'Bash', agent: { type: 'agent', description: '' } }
+  expect(originLabel(unnamed)).toBe('agent')
+  expect(originDetail(unnamed)).toBe('started by Bash in an agent')
+  expect(originDetail({ tool: 'Monitor', agent: { type: 'Explore', description: '' } })).toBe('started by Monitor in an agent')
+})
+
+test('the command cell text of a row: its label, or nothing when unknown', () => {
+  const kept: Origins = {
+    calls: [],
+    byPid: { 11: { tool: 'Bash', agent: { type: 'Explore', description: 'Look' }, startMs: 95_000 } },
+  }
+  expect(originText(kept, { pid: 11, startMs: 95_000 })).toBe('subagent: Explore')
+  expect(originText(kept, { pid: 12, startMs: 95_000 })).toBeUndefined()
 })
 
 test('a call recorded up to 2 s after the start is matched, not 2_001 ms', () => {
