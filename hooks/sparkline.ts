@@ -5,6 +5,9 @@ import { formatBytes, formatPercent } from './format'
 import { downsample } from './history'
 import { fit } from './view'
 
+// Wide enough for any value up to 999.99GB or 999.9% (`1000.0%` is 7).
+const VALUE_WIDTH = 7
+
 export const BLOCKS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
 
 // Memory never scales to less than this (or 10% of its highest point), so noise stays flat.
@@ -42,8 +45,9 @@ export const sparkLines = (points: Point[], width: number): [string, string] | n
   const [memBottom, memTop] = memoryScale(memory)
   const now = [formatBytes(last.memKb), formatPercent(last.cpuPct)]
   const peak = [formatBytes(Math.max(...memory)), formatPercent(Math.max(...cpu))]
-  const nowWidth = Math.max(...now.map(text => text.length))
-  const peakWidth = Math.max(...peak.map(text => text.length))
+  // At least VALUE_WIDTH cells, so `999MB` becoming `1.00GB` or `9.9%` becoming `100.0%` does not shift the chart.
+  const nowWidth = Math.max(VALUE_WIDTH, ...now.map(text => text.length))
+  const peakWidth = Math.max(VALUE_WIDTH, ...peak.map(text => text.length))
   // `mem ` + chart + ` ` + now + ` max ` + peak.
   const chartWidth = Math.max(0, width - 4 - 1 - nowWidth - 5 - peakWidth)
   const line = (label: string, chart: string, index: number) =>

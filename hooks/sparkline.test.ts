@@ -31,12 +31,12 @@ test('memory scales from its lowest to its highest point, at least 64 MB or 10% 
 
 test('lines: chart padded to its width, then the current value and the window maximum', () => {
   expect(sparkLines([point(0, 512, 50), point(1000, 1024, 200)], 40)).toEqual([
-    'mem ▁█                 1.00GB max 1.00GB',
-    'cpu ▃█                 200.0% max 200.0%',
+    'mem ▁█                1.00GB max  1.00GB',
+    'cpu ▃█                200.0% max  200.0%',
   ])
   expect(sparkLines([point(0, 512, 0), point(1000, 512, 50)], 40)).toEqual([
-    'mem ▅▅                   512MB max 512MB',
-    'cpu ▁▅                   50.0% max 50.0%',
+    'mem ▅▅                 512MB max   512MB',
+    'cpu ▁▅                 50.0% max   50.0%',
   ])
 })
 
@@ -45,14 +45,17 @@ test('a slow leak fills the height', () => {
   expect(sparkLines(leak, 60)?.[0]?.startsWith('mem ▁▂▃▄▅▆▇█ ')).toBe(true)
 })
 
-test('the values stay in place while the chart fills', () => {
+test('the values stay in place while the chart fills, and as their text grows', () => {
+  const grown = [point(0, 999, 9.9), point(1000, 1100, 100)]
+  const small = [point(0, 999, 9.9), point(1000, 999, 9.9)]
+  expect(sparkLines(grown, 40)?.[1]?.indexOf(' max ')).toBe(sparkLines(small, 40)?.[1]?.indexOf(' max '))
   const flat = (count: number) => Array.from({ length: count }, (_, index) => point(index * 1000, 512, 50))
   expect(sparkLines(flat(2), 40)?.[0]?.indexOf(' max ')).toBe(sparkLines(flat(10), 40)?.[0]?.indexOf(' max '))
 })
 
 test('a narrow pane drops the chart before the values', () => {
   expect(sparkLines([point(0, 512, 50), point(1000, 1024, 200)], 11)).toEqual([
-    'mem  1.00GB max 1.00GB',
-    'cpu  200.0% max 200.0%',
+    'mem   1.00GB max  1.00GB',
+    'cpu   200.0% max  200.0%',
   ])
 })
