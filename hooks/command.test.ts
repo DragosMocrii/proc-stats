@@ -48,7 +48,7 @@ test('/proc-stats report answers with the report from current state, and opens n
   const { text } = await $.command.run(run(' Report '))
   expect(text).toBe(
     [
-      'proc-stats report · Linux · Claude Code pid 10 · up 1m 0s',
+      'report · Linux · Claude Code pid 10 · up 1m 0s',
       'Now: Claude Code 484MB, 2.0% CPU · no child processes',
       'Peaks in the last 10 min: memory 600MB 30s ago · CPU 40.0% 30s ago',
       'Marker: 🟡 warn (memory none, CPU warn)',
@@ -62,13 +62,13 @@ test('/proc-stats report answers with the report from current state, and opens n
 test('/proc-stats report before the first reading says so', async ($, on) => {
   on('clock.now', () => ({ value: 100_000 }))
   const { text } = await $.command.run(run('report'))
-  expect(text).toBe('proc-stats report: no reading yet')
+  expect(text).toBe('report: no reading yet')
 })
 
 test('/proc-stats with another argument says how to use it, and opens nothing', async ($, on) => {
   const opened = watchOpen(on)
   const { text } = await $.command.run(run('nope'))
-  expect(text).toBe('proc-stats: unknown argument "nope". /proc-stats opens the Processes pane; /proc-stats report summarizes the session here.')
+  expect(text).toBe('unknown argument "nope". /proc-stats opens the Processes pane; /proc-stats report summarizes the session here.')
   expect(opened()).toBe(false)
 })
 

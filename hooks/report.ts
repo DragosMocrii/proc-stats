@@ -44,10 +44,10 @@ const heaviest = (rows: ProcRow[]) =>
 
 export const reportText = ({ reading, points, alerts, origins, now, historyMinutes }: ReportInput) => {
   const snapshot = reading.snapshot
-  if (!snapshot) return `proc-stats report: ${reading.error ?? 'no reading yet'}`
+  if (!snapshot) return `report: ${reading.error ?? 'no reading yet'}`
   const { engine, children, childCount, childKb, childCpuPercent } = snapshot
   const lines = [
-    `proc-stats report · ${PLATFORMS[snapshot.platform] ?? snapshot.platform} · Claude Code pid ${snapshot.pid} · up ${formatDuration(engine.uptimeSeconds)}`,
+    `report · ${PLATFORMS[snapshot.platform] ?? snapshot.platform} · Claude Code pid ${snapshot.pid} · up ${formatDuration(engine.uptimeSeconds)}`,
   ]
 
   const own = `Claude Code ${formatBytes(engine.rssKb)}, ${formatPercent(engine.cpuPercent)} CPU`

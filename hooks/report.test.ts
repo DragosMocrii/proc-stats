@@ -61,7 +61,7 @@ test('report: a busy session, every section', () => {
   ]
   expect(reportText(input({ reading: { snapshot: snapshot(children) }, points, alerts, origins }))).toBe(
     [
-      'proc-stats report · Linux · Claude Code pid 10 · up 1h 2m',
+      'report · Linux · Claude Code pid 10 · up 1h 2m',
       'Now: Claude Code 484MB, 2.0% CPU · 6 child processes 860MB, 99.0% CPU · total 1.31GB, 101.0% CPU',
       'Peaks in the last 10 min: memory 1.27GB 2m 0s ago · CPU 145.0% 30s ago',
       'Heaviest processes:',
@@ -79,16 +79,16 @@ test('report: a busy session, every section', () => {
 })
 
 test('report: no reading yet, or a failed one, is one line', () => {
-  expect(reportText(input({ reading: {} }))).toBe('proc-stats report: no reading yet')
+  expect(reportText(input({ reading: {} }))).toBe('report: no reading yet')
   expect(reportText(input({ reading: { error: 'cannot read process 10 on linux' } }))).toBe(
-    'proc-stats report: cannot read process 10 on linux',
+    'report: cannot read process 10 on linux',
   )
 })
 
 test('report: an unreadable process table is unknown, not zero', () => {
   expect(reportText(input({ reading: { snapshot: snapshot(null) } }))).toBe(
     [
-      'proc-stats report · Linux · Claude Code pid 10 · up 1h 2m',
+      'report · Linux · Claude Code pid 10 · up 1h 2m',
       'Now: Claude Code 484MB, 2.0% CPU · child processes unknown (the process table could not be read)',
       'Peaks in the last 10 min: no history yet',
       'Marker: none',
@@ -100,7 +100,7 @@ test('report: an unreadable process table is unknown, not zero', () => {
 test('report: a quiet session, with an alert state saved before toasts were kept', () => {
   expect(reportText(input())).toBe(
     [
-      'proc-stats report · Linux · Claude Code pid 10 · up 1h 2m',
+      'report · Linux · Claude Code pid 10 · up 1h 2m',
       'Now: Claude Code 484MB, 2.0% CPU · no child processes',
       'Peaks in the last 10 min: no history yet',
       'Marker: none',
@@ -115,7 +115,7 @@ test('report: the first reading has no CPU yet; one child; the alert level and w
   const alerts: AlertState = { levels: { mem: 'none', cpu: 'alert' }, tracks: {} }
   expect(reportText(input({ reading: { snapshot: first }, historyMinutes: 30, alerts }))).toBe(
     [
-      'proc-stats report · Linux · Claude Code pid 10 · up 1h 2m',
+      'report · Linux · Claude Code pid 10 · up 1h 2m',
       'Now: Claude Code 484MB, … CPU · 1 child process 20MB, … CPU · total 504MB, … CPU',
       'Peaks in the last 30 min: no history yet',
       'Heaviest processes:',

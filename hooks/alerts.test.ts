@@ -249,3 +249,10 @@ test('stepAlerts: each toast sent is kept for the report, the last 5, oldest fir
   expect(stepAlerts(state, quiet, [], 7000, DEFAULTS, 1000).state.recent).toEqual(state.recent)
   expect('recent' in stepAlerts(EMPTY_ALERTS, quiet, [], 7000, DEFAULTS, 1000).state).toBe(false)
 })
+
+test('stepAlerts: an unreadable table keeps an existing recent list unchanged', () => {
+  const recent = [{ t: 1000, text: 'cmd6 grew past 1.00GB · pid 6 · /proc-stats' }]
+  const state: AlertState = { ...EMPTY_ALERTS, recent }
+  const unknown = snapshot(100, 0, { children: null, childCpuPercent: null })
+  expect(stepAlerts(state, unknown, [], 2000, DEFAULTS, 1000).state.recent).toEqual(recent)
+})

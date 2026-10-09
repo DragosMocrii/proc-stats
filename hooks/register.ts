@@ -549,16 +549,16 @@ export const register: Register = (on, options) => {
       try {
         return { text: await report($, settings.historyMinutes) }
       } catch {
-        return { text: 'proc-stats: the report could not be made; try again.' }
+        return { text: 'the report could not be made; try again.' }
       }
     }
-    if (typed !== '') return { text: `proc-stats: unknown argument "${typed}". ${USAGE}` }
+    if (typed !== '') return { text: `unknown argument "${typed}". ${USAGE}` }
     const opened = await $.ui.open({ ...OPEN, focus: true })
     await update($, isOpen, () => true)
 
     return { text: opened.isPlaced ? 'Processes pane opened.' : 'Processes pane could not be placed.' }
   }).catch(($, e, next) =>
-    next.called ? next(e) : { text: 'proc-stats: the Processes pane could not be opened.' },
+    next.called ? next(e) : { text: 'the Processes pane could not be opened.' },
   )
 
   // A close the person or the engine makes. A reload is no close: the pane comes back.
