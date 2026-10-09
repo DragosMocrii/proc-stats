@@ -2,6 +2,8 @@
 
 A Claude Code mod that pins a status line with the session's own resource use, and opens a task-manager pane of it on `/proc-stats`:
 
+![Claude starts a dev server, a test watcher and a detached tunnel; /proc-stats shows them in a tree with live charts, details, collapsing and sorting, and /proc-stats report summarizes the session](docs/demo.gif)
+
 ```
 mem 484MB · peak 530MB · cpu 2.4% · up 12m 4s
 ```
@@ -86,4 +88,12 @@ Answer `y` to add the marketplace, then choose a scope (user scope loads it in e
 claude plugin validate .
 claude plugin test .
 claude --plugin-dir .
+```
+
+`docs/demo.gif` is recorded by `docs/demo`, a Go module that runs Claude Code with the mod in a pseudo-terminal, in a made-up project whose stand-in processes hold memory and CPU, and draws the screen to a GIF. It runs on Linux, logged in to Claude Code (its one prompt uses your account), in a home and config directory of its own; see the comment at the top of `docs/demo/main.go` for the fonts it needs. Re-record it after visible changes:
+
+```
+cd docs/demo
+go run . -font DejaVuSansMono.ttf -bold DejaVuSansMono-Bold.ttf \
+  -fallback DejaVuSans.ttf,NotoSansSymbols2-Regular.ttf,NotoSansSymbols.ttf -emoji noto-emoji/2D/png/72
 ```

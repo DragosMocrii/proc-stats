@@ -4,3 +4,6 @@ tsconfig.json
 
 # Working files of the superpowers workflow (plans’ ledgers, briefs, reviews).
 .superpowers/
+
+# Specs and plans of the superpowers workflow: kept locally, not published.
+docs/superpowers/

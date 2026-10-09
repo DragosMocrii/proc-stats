@@ -1,0 +1,9 @@
+{
+  "name": "acme-web",
+  "private": true,
+  "scripts": {
+    "dev": "exec node scripts/dev.js --port 3000 --hostname localhost",
+    "test": "exec node scripts/test.js --watch --reporter dot",
+    "tunnel": "exec node scripts/tunnel.js --port 3000 --subdomain acme-web"
+  }
+}
