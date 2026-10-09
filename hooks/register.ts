@@ -158,7 +158,7 @@ const startSampling = async ($: EngineInterface, settings: Settings) => {
         try {
           const kept = (await $.state.get(PANE_STATE)).value ?? EMPTY_PANE
           const pruned = pruneState(kept, snapshot)
-          if (JSON.stringify(pruned) !== JSON.stringify(kept)) await update($, pane, () => pruned)
+          if (JSON.stringify(pruned) !== JSON.stringify(kept)) await update($, pane, state => pruneState(state, snapshot))
         } catch {
           // The pane keeps its state this reading.
         }

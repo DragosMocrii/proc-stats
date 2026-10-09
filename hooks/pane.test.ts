@@ -67,14 +67,37 @@ test('rows are buttons; a press selects and shows details; s cycles the sort', a
     expect(await ui.find({ key: 'pid:12' })).toBeDefined()
     expect(await ui.find({ key: 'pid:10' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /Total/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /pid 12 · parent 11/ })).toBeUndefined()
     await ui.press({ key: 'pid:12' })
-    expect(await ui.find({ type: 'Text', text: 'python3 -c x' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /pid 12 · parent 11/ })).toBeDefined()
     expect((await ui.find({ key: 'sort' }))?.text).toContain('Sort: tree')
     await ui.press({ key: 'sort' })
     expect((await ui.find({ key: 'sort' }))?.text).toContain('Sort: cpu')
     await ui.press({ key: 'sort' })
     await ui.press({ key: 'sort' })
     await ui.press({ key: 'sort' })
+    // Back to the engine row, whose details name no parent, for the next surface.
+    await ui.press({ key: 'pid:10' })
     await ui.unmount()
   }
+})
+
+test('pressing a row with children collapses it, and again expands it', async ($, on) => {
+  on('state.get', { plugin: 'proc-stats', key: 'reading' }, () => ({ value: { value: { snapshot }, version: 1 } }))
+  const ui = await $.ui.mount({
+    plugin: 'proc-stats',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'proc-stats',
+    props: { ...PANE_PROPS, bodyColumns: 80 },
+  })
+  expect((await ui.find({ key: 'pid:11' }))?.text).toContain('▾')
+  expect(await ui.find({ key: 'pid:12' })).toBeDefined()
+  await ui.press({ key: 'pid:11' })
+  expect((await ui.find({ key: 'pid:11' }))?.text).toContain('▸')
+  expect(await ui.find({ key: 'pid:12' })).toBeUndefined()
+  await ui.press({ key: 'pid:11' })
+  expect((await ui.find({ key: 'pid:11' }))?.text).toContain('▾')
+  expect(await ui.find({ key: 'pid:12' })).toBeDefined()
+  await ui.unmount()
 })
