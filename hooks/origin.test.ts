@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { OriginCall, Origins } from '../types'
 import { engine, proc } from './fixtures'
-import { CALL_TTL_MS, EMPTY_ORIGINS, matchOrigins, originDetail, originLabel, originOf } from './origin'
+import { CALL_TTL_MS, EMPTY_ORIGINS, MAX_LEAD_MS, matchOrigins, originDetail, originLabel, originOf } from './origin'
 import { buildSnapshot } from './snapshot'
 
 const wrap = (inner: string) =>
@@ -84,4 +84,36 @@ test('looking up, labelling and describing an origin', () => {
   expect(originLabel(sub)).toBe('subagent: code-reviewer')
   expect(originDetail({ tool: 'Bash', agent: null })).toBe('started by Bash in the main conversation')
   expect(originDetail(sub)).toBe('started by Bash in subagent code-reviewer: Review the diff')
+})
+
+test('a call only starts processes within MAX_LEAD_MS after it; the unmatched call stays', () => {
+  const snapshot = reading(100_000, [[11, 'ls', 5]])
+  const stale = matchOrigins(origins([call('ls', 50_000)]), snapshot, 100_000)
+  expect(stale.byPid).toEqual({})
+  expect(stale.calls.length).toBe(1)
+  const near = matchOrigins(origins([call('ls', 90_000)]), snapshot, 100_000)
+  expect(near.byPid['11']?.tool).toBe('Bash')
+  expect(MAX_LEAD_MS).toBe(10_000)
+})
+
+test('the lead limit is inclusive of the start tolerance', () => {
+  const snapshot = reading(100_000, [[11, 'ls', 5]])
+  expect(matchOrigins(origins([call('ls', 95_000 - MAX_LEAD_MS - 2_000)]), snapshot, 100_000).byPid['11']).toBeDefined()
+  expect(matchOrigins(origins([call('ls', 95_000 - MAX_LEAD_MS - 2_001)]), snapshot, 100_000).byPid).toEqual({})
+})
+
+test('a call recorded up to 2 s after the start is matched, not 2_001 ms', () => {
+  const snapshot = reading(100_000, [[11, 'ls', 5]])
+  expect(matchOrigins(origins([call('ls', 96_000)]), snapshot, 100_000).byPid['11']).toBeDefined()
+  expect(matchOrigins(origins([call('ls', 97_000)]), snapshot, 100_000).byPid['11']).toBeDefined()
+  expect(matchOrigins(origins([call('ls', 97_001)]), snapshot, 100_000).byPid).toEqual({})
+})
+
+test('calls out of time order: the earliest eligible one goes first', () => {
+  const snapshot = reading(100_000, [[11, 'ls', 5], [12, 'ls', 3]])
+  const late = call('ls', 96_000, { tool: 'Monitor' })
+  const early = call('ls', 94_000)
+  const next = matchOrigins(origins([late, early]), snapshot, 100_000)
+  expect(next.byPid['11']?.tool).toBe('Bash')
+  expect(next.byPid['12']?.tool).toBe('Monitor')
 })
