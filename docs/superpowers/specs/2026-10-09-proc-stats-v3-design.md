@@ -43,6 +43,7 @@ The mod is split into focused modules. Everything but the sampler and the hooks 
 | `stats.ts` | per-platform parsers (exists) |
 | `sampler.ts` | parsing a full reading: Claude Code, descendants, detached processes (pid, ppid, command, memory, CPU seconds, start time, marker) |
 | `snapshot.ts` | two readings → `Snapshot`: per-process CPU %, tree, totals (today's `buildSnapshot`) |
+| `status.ts` | the status line text (the marker joins it in package B) |
 | `history.ts` | ring buffer of `{ t, memKb, cpuPct }` totals; downsampling by max; averages |
 | `alerts.ts` | marker level with hysteresis; per-process toast tracker |
 | `origin.ts` | unwrapping the Bash wrapper's `eval '…'`; matching tool calls to rows |
@@ -115,6 +116,8 @@ Sorted views are flat, with the parent's command dim after each row.
 **Detail area**: the full command line wrapped, pid, parent, start time, origin, memory and CPU of the selected row.
 
 On narrow panes, columns give way as today and sparklines shorten.
+
+**Reopening.** A reload (a settings change, a hot reload) closes the pane without a `ui.close` the mod hears. `isOpen` in `$.state` is set by `/proc-stats` and cleared by `ui.close`; at session start the pane is reopened if it is set. No transcript line is written on close.
 
 ## Origin
 
