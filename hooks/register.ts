@@ -5,6 +5,8 @@ import type { Reading } from '../types'
 import { drawPane } from './pane'
 import { buildSnapshot, capRows } from './snapshot'
 import type { Timed } from './snapshot'
+import { readSettings } from './settings'
+import type { Settings } from './settings'
 import { statusLine } from './status'
 import { childPids, linuxEngine, linuxProc, macReading, windowsReading } from './sampler'
 import type { Gathered } from './sampler'
@@ -13,8 +15,6 @@ import type { Platform, Proc } from './stats'
 
 const PANE = 'proc-stats'
 const COMMAND = 'proc-stats'
-// Each reading starts ps (PowerShell on Windows), which costs more on a busy Mac and most on Windows.
-const INTERVAL_MS: Record<Platform, number> = { linux: 1000, mac: 2000, windows: 5000 }
 
 const reading = atom({ plugin: 'proc-stats', key: 'reading' } as const, {} as Reading)
 const isOpen = atom({ plugin: 'proc-stats', key: 'isOpen' } as const, false)
@@ -110,7 +110,7 @@ const readProcesses = (
 }
 
 // One loop feeds both views: the status line, and the reading the pane draws.
-const startSampling = async ($: EngineInterface) => {
+const startSampling = async ($: EngineInterface, settings: Settings) => {
   const set = (next: Reading) => update($, reading, () => next)
 
   try {
@@ -127,7 +127,7 @@ const startSampling = async ($: EngineInterface) => {
         if (!isComplete(sample.engine)) throw new Error('unreadable sample')
         const now = { ...sample, wallMs: await $.clock.now() }
         const snapshot = buildSnapshot(platform, pid, now, before)
-        $.ui.status(statusLine(snapshot))
+        $.ui.status(statusLine(snapshot, settings.statusShowChildren))
         await set({ snapshot: capRows(snapshot) })
         before = now
       } catch {
@@ -139,7 +139,7 @@ const startSampling = async ($: EngineInterface) => {
       }
     }
 
-    $.clock.every(INTERVAL_MS[platform], () => void sample())
+    $.clock.every(settings.intervalMs[platform], () => void sample())
     await sample()
   } catch (error) {
     const text = error instanceof Error ? error.message : 'unavailable'
@@ -148,14 +148,17 @@ const startSampling = async ($: EngineInterface) => {
   }
 }
 
-export const register: Register = on => {
+// A settings change reloads the module, so they are read once per load.
+export const register: Register = (on, options) => {
+  const settings = readSettings(options)
+
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     await $.command.register({
       name: COMMAND,
       description: 'Show Claude Code and the processes it started in a task-manager pane',
     })
-    void startSampling($)
+    void startSampling($, settings)
     // A reload closes the pane (an unload no hook hears); put it back if it was open.
     if (await read($, isOpen)) void $.ui.open(OPEN)
 

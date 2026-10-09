@@ -1,7 +1,21 @@
 {
   "name": "proc-stats",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Status line and task-manager pane with Claude Code's memory, CPU and uptime, and those of the processes it started",
   "author": { "name": "Dragos Mocrii", "email": "dragosmocrii@gmail.com" },
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "intervalLinuxMs": { "type": "number", "title": "Refresh on Linux (ms)", "description": "How often processes are read on Linux; 250 to 60000.", "default": 1000 },
+    "intervalMacMs": { "type": "number", "title": "Refresh on macOS (ms)", "description": "How often processes are read on macOS; 250 to 60000.", "default": 2000 },
+    "intervalWindowsMs": { "type": "number", "title": "Refresh on Windows (ms)", "description": "How often processes are read on Windows; 1000 to 60000. Each read starts PowerShell.", "default": 5000 },
+    "warnMemMb": { "type": "number", "title": "Memory warning (MB)", "description": "🟡 on the status line when Claude Code and its processes use more memory than this.", "default": 2048 },
+    "alertMemMb": { "type": "number", "title": "Memory alert (MB)", "description": "🔴 on the status line above this.", "default": 4096 },
+    "warnCpuPct": { "type": "number", "title": "CPU warning (%)", "description": "🟡 when the session's CPU, averaged over 10 s, is above this (100 = one core).", "default": 150 },
+    "alertCpuPct": { "type": "number", "title": "CPU alert (%)", "description": "🔴 above this.", "default": 300 },
+    "toastCpuPct": { "type": "number", "title": "Busy process CPU (%)", "description": "A toast when one child process stays above this CPU…", "default": 90 },
+    "toastCpuSeconds": { "type": "number", "title": "Busy process time (s)", "description": "…for this many seconds.", "default": 60 },
+    "toastMemMb": { "type": "number", "title": "Large process memory (MB)", "description": "A toast when one child process grows past this.", "default": 1024 },
+    "historyMinutes": { "type": "number", "title": "History (minutes)", "description": "How far back the pane's sparklines reach; 1 to 120.", "default": 10 },
+    "statusShowChildren": { "type": "boolean", "title": "Child processes on the status line", "description": "Show the + part for processes Claude Code started.", "default": true }
+  }
 }

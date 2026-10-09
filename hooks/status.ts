@@ -4,9 +4,10 @@ import type { Snapshot } from '../types'
 import { formatBytes, formatDuration, formatPair, formatPercent } from './format'
 
 // The children's share shows only while there are any; `?` when the table could not be read.
-export const statusLine = (snapshot: Snapshot) => {
+export const statusLine = (snapshot: Snapshot, showChildren = true) => {
   const { engine, children, childCpuPercent } = snapshot
-  const hasChildren = children === null || snapshot.childCount > 0
+  // Without the children, or with none running, Claude Code's own figures alone.
+  const hasChildren = showChildren && (children === null || snapshot.childCount > 0)
   let cpu = '…'
   if (engine.cpuPercent !== null) {
     const own = engine.cpuPercent.toFixed(1)
