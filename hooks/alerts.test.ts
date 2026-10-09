@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import type { ProcRow, ProcTrack, Snapshot } from '../types'
+import type { AlertState, ProcRow, ProcTrack, Snapshot } from '../types'
 import { cpuAverage, EMPTY_ALERTS, levelFor, markerFor, sessionLevels, stepAlerts, toastText, trackProcesses, worse } from './alerts'
 import { MB } from './fixtures'
 import { DEFAULTS } from './settings'
@@ -233,4 +233,19 @@ test('stepAlerts: a toast once, and not again after a reload restores the state'
   const restored = JSON.parse(JSON.stringify(once.state))
   expect(stepAlerts(restored, big, [], 2000, DEFAULTS, 1000).toast).toBeNull()
   expect(once.state.levels.mem).toBe('warn')
+})
+
+test('stepAlerts: each toast sent is kept for the report, the last 5, oldest first', () => {
+  let state: AlertState = EMPTY_ALERTS
+  for (let pid = 1; pid <= 6; pid++) {
+    const big = snapshot(100, 2000, { children: [row(pid, { rssKb: 2000 * MB })], childCount: 1 })
+    state = stepAlerts(state, big, [], pid * 1000, DEFAULTS, 1000).state
+  }
+  expect(state.recent).toEqual(
+    [2, 3, 4, 5, 6].map(pid => ({ t: pid * 1000, text: `cmd${pid} grew past 1.00GB · pid ${pid} · /proc-stats` })),
+  )
+  // A reading without a toast keeps them; an idle state never gains the field, so it is not written.
+  const quiet = snapshot(100, 0)
+  expect(stepAlerts(state, quiet, [], 7000, DEFAULTS, 1000).state.recent).toEqual(state.recent)
+  expect('recent' in stepAlerts(EMPTY_ALERTS, quiet, [], 7000, DEFAULTS, 1000).state).toBe(false)
 })

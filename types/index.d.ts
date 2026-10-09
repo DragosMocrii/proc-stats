@@ -50,8 +50,12 @@ export type ProcTrack = {
   memCoolSince: number | null
 }
 
-// What the alerts remember between readings, and across reloads.
-export type AlertState = { levels: { mem: Level; cpu: Level }; tracks: Record<string, ProcTrack> }
+// A toast the alerts sent: when (ms since the epoch) and its text.
+export type SentToast = { t: number; text: string }
+
+// What the alerts remember between readings, and across reloads; `recent` holds the last toasts, oldest first
+// (absent until the first one).
+export type AlertState = { levels: { mem: Level; cpu: Level }; tracks: Record<string, ProcTrack>; recent?: SentToast[] }
 
 // How the pane orders its rows: the process tree, or flat by CPU, memory or runtime (highest first).
 export type SortMode = 'tree' | 'cpu' | 'mem' | 'time'

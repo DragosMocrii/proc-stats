@@ -13,6 +13,9 @@ export const FALL_BACK = 0.9
 // How long a fired toast stays below FALL_BACK before it re-arms.
 export const COOL_MS = 10_000
 
+// How many sent toasts the alerts keep for the report.
+export const RECENT_TOASTS = 5
+
 export const EMPTY_ALERTS: AlertState = { levels: { mem: 'none', cpu: 'none' }, tracks: {} }
 
 const RANK: Record<Level, number> = { none: 0, warn: 1, alert: 2 }
@@ -141,14 +144,17 @@ export const toastText = (fired: Fired[]) => {
   return `${pids.length} processes over limits: ${names.join(', ')} · /proc-stats`
 }
 
-// One reading: the next alert state and the toast, if any. The first reading (no CPU yet)
-// and an unreadable table move the levels only.
+// One reading: the next alert state and the toast, if any, which joins the recent toasts. The first
+// reading (no CPU yet) and an unreadable table move the levels only.
 export const stepAlerts = (state: AlertState, snapshot: Snapshot, points: Point[], now: number, settings: Settings, intervalMs: number) => {
   const levels = sessionLevels(snapshot, points, now, settings, state.levels, intervalMs)
   if (snapshot.engine.cpuPercent === null || snapshot.children === null) {
-    return { state: { levels, tracks: state.tracks }, toast: null }
+    return { state: { ...state, levels }, toast: null }
   }
   const { tracks, fired } = trackProcesses(state.tracks, snapshot.children, now, settings)
+  const toast = toastText(fired)
+  // A toast sent joins the recent ones; without one they stay as they were (absent until the first).
+  const recent = toast ? { recent: [...(state.recent ?? []), { t: now, text: toast }].slice(-RECENT_TOASTS) } : {}
 
-  return { state: { levels, tracks }, toast: toastText(fired) }
+  return { state: { ...state, levels, tracks, ...recent }, toast }
 }
