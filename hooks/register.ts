@@ -308,16 +308,17 @@ export const register: Register = on => {
     await update($, isOpen, () => true)
 
     return { text: opened.isPlaced ? 'Processes pane opened.' : 'Processes pane could not be placed.' }
-  })
+  }).catch(($, e, next) =>
+    next.called ? next(e) : { text: 'proc-stats: the Processes pane could not be opened.' },
+  )
 
-  // Diagnostic: says why the pane closed. An unload closes it before any hook hears.
+  // A close the person or the engine makes. A reload is no close: the pane comes back.
   on('ui.close', { id: PANE }, async ($, e, next) => {
-    $.ui.log(`proc-stats: Processes pane closed (${e.origin.kind})`)
     const closed = await next(e)
     await update($, isOpen, () => false)
 
     return closed
-  })
+  }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
     drawPane($.ui.resolve(e), await read($, reading), e.props.bodyColumns),
