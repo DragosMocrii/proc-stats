@@ -101,3 +101,24 @@ test('pressing a row with children collapses it, and again expands it', async ($
   expect(await ui.find({ key: 'pid:12' })).toBeDefined()
   await ui.unmount()
 })
+
+test('k asks before stopping; n cancels; Claude Code offers no stop', async ($, on) => {
+  on('state.get', { plugin: 'proc-stats', key: 'reading' }, () => ({ value: { value: { snapshot }, version: 1 } }))
+  const ui = await $.ui.mount({
+    plugin: 'proc-stats',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'proc-stats',
+    props: { ...PANE_PROPS, bodyColumns: 80 },
+  })
+  await ui.press({ key: 'pid:10' })
+  expect(await ui.find({ key: 'stop' })).toBeUndefined()
+  await ui.press({ key: 'pid:12' })
+  await ui.press({ key: 'stop' })
+  expect(await ui.find({ type: 'Text', text: 'Stop python3 -c x (pid 12)?' })).toBeDefined()
+  expect(await ui.find({ key: 'confirm' })).toBeDefined()
+  await ui.press({ key: 'cancel' })
+  expect(await ui.find({ key: 'confirm' })).toBeUndefined()
+  expect(await ui.find({ key: 'stop' })).toBeDefined()
+  await ui.unmount()
+})

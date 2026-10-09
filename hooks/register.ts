@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AlertState, History, PaneState, Point, Reading } from '../types'
+import type { AlertState, History, PaneState, Point, Reading, StopState } from '../types'
 import { historyCapacity, pointOf, pointSpacingMs, pushPoint, shouldRecord } from './history'
 import { EMPTY_ALERTS, markerFor, stepAlerts, worse } from './alerts'
 import { drawPane } from './pane'
@@ -11,7 +11,8 @@ import type { Timed } from './snapshot'
 import { readSettings } from './settings'
 import type { Settings } from './settings'
 import { statusLine } from './status'
-import { cycleSort, EMPTY_PANE, pruneState, toggleCollapsed } from './view'
+import { killArgv, outcomeText, STOP_CHECK_MS, stillListed, stopTargets } from './stop'
+import { cycleSort, EMPTY_PANE, isSelected, labelOf, pruneState, toggleCollapsed } from './view'
 import { childPids, linuxEngine, linuxProc, macReading, windowsReading } from './sampler'
 import type { Gathered } from './sampler'
 import { isComplete, parsePsTable, powerShellSample } from './stats'
@@ -123,6 +124,29 @@ const readProcesses = (
 }
 
 // What the pane's presses do. Built here because they call $, which pane.tsx never receives.
+// Sends the signal; a failure is the first line of what the command said, else null.
+const signal = async ($: EngineInterface, platform: string, pids: number[], isForce: boolean) => {
+  const { exitCode, stderr } = await $.process.run(killArgv(platform, pids, isForce))
+
+  return exitCode === 0 ? null : (stderr.trim().split('\n')[0] ?? `exit ${exitCode}`)
+}
+
+const setStop = ($: EngineInterface, stop: StopState | null) => update($, pane, state => ({ ...state, stop }))
+
+// STOP_CHECK_MS after a signal: done when nothing is listed; else offer a force stop, or, after one, report.
+const checkStop = async ($: EngineInterface) => {
+  const stop = (await $.state.get(PANE_STATE)).value?.stop
+  const snapshot = (await $.state.get(READING)).value?.snapshot
+  if (!stop || !snapshot || (stop.phase !== 'sent' && stop.phase !== 'forced')) return
+  const remaining = stillListed(snapshot, stop.pids)
+  if (remaining.length > 0 && stop.phase === 'sent') {
+    await setStop($, { ...stop, phase: 'stuck' })
+    return
+  }
+  $.ui.toast(outcomeText(stop, remaining))
+  await setStop($, null)
+}
+
 const paneHandlers = ($: EngineInterface): PaneHandlers => ({
   onRow: target =>
     void update($, pane, state => ({
@@ -131,6 +155,53 @@ const paneHandlers = ($: EngineInterface): PaneHandlers => ({
       collapsed: target.hasChildren ? toggleCollapsed(state.collapsed, target.pid) : state.collapsed,
     })),
   onSort: () => void update($, pane, state => ({ ...state, sort: cycleSort(state.sort) })),
+  // k: ask first. The targets are checked again at y, so a process that ended meanwhile is left alone.
+  onStop: () =>
+    void (async () => {
+      const state = (await $.state.get(PANE_STATE)).value ?? EMPTY_PANE
+      const snapshot = (await $.state.get(READING)).value?.snapshot
+      const pids = snapshot && state.selected ? stopTargets(snapshot, state.selected) : null
+      const row = snapshot?.children?.find(each => isSelected(each, state.selected))
+      if (!pids || !row) {
+        $.ui.toast('proc-stats: that process is no longer listed')
+        return
+      }
+      await setStop($, { pid: row.pid, startMs: row.startMs, label: labelOf(row.command), pids, phase: 'confirm' })
+    })(),
+  onConfirm: () =>
+    void (async () => {
+      const stop = (await $.state.get(PANE_STATE)).value?.stop
+      const snapshot = (await $.state.get(READING)).value?.snapshot
+      if (!stop || stop.phase !== 'confirm' || !snapshot) return
+      const pids = stopTargets(snapshot, stop)
+      if (!pids) {
+        $.ui.toast('proc-stats: that process is no longer listed')
+        await setStop($, null)
+        return
+      }
+      const failure = await signal($, snapshot.platform, pids, false)
+      if (failure) $.ui.toast(`proc-stats: ${failure}`)
+      await setStop($, { ...stop, pids, phase: 'sent' })
+      $.clock.after(STOP_CHECK_MS, () => void checkStop($))
+    })(),
+  onForce: () =>
+    void (async () => {
+      const stop = (await $.state.get(PANE_STATE)).value?.stop
+      const snapshot = (await $.state.get(READING)).value?.snapshot
+      if (!stop || stop.phase !== 'stuck' || !snapshot) return
+      const current = stopTargets(snapshot, stop)
+      const pids = current ? stop.pids.filter(pid => current.includes(pid)) : []
+      if (pids.length === 0) {
+        $.ui.toast(outcomeText(stop, []))
+        await setStop($, null)
+        return
+      }
+      const failure = await signal($, snapshot.platform, pids, true)
+      if (failure) $.ui.toast(`proc-stats: ${failure}`)
+      await setStop($, { ...stop, phase: 'forced' })
+      $.clock.after(STOP_CHECK_MS, () => void checkStop($))
+    })(),
+  onCancel: () => void setStop($, null),
 })
 
 // One loop feeds both views: the status line, and the reading the pane draws.
@@ -253,6 +324,10 @@ export const register: Register = (on, options) => {
   // Arrow keys move the focus ring over the rows; the row it lands on is the selection.
   on('ui.focus', { requestId: PANE }, async ($, e, next) => {
     const moved = await next(e)
+    if (e.element === undefined) {
+      const stop = (await $.state.get(PANE_STATE)).value?.stop
+      if (stop?.phase === 'confirm') await setStop($, null)
+    }
     const pid = e.element?.startsWith('pid:') ? Number(e.element.slice(4)) : null
     if (pid !== null && !('deny' in moved)) {
       const snapshot = (await $.state.get(READING)).value?.snapshot
