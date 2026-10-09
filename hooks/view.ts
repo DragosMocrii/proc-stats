@@ -118,7 +118,7 @@ export const viewRows = (snapshot: Snapshot, state: PaneState): ViewRow[] => {
         row,
         label: label(row.pid),
         prefix: '',
-        parent: row.ppid === snapshot.pid ? 'Claude Code' : label(row.ppid),
+        parent: row.ppid === snapshot.pid ? 'Claude Code' : row.detached && !labels.has(row.ppid) ? 'detached' : label(row.ppid),
         rssKb: row.rssKb,
         cpuPercent: row.cpuPercent,
         hasChildren: false,
@@ -144,7 +144,11 @@ export const viewRows = (snapshot: Snapshot, state: PaneState): ViewRow[] => {
     })
     index = isCollapsed ? end : index + 1
   }
-  const prefixes = treePrefixes(visible.map(view => view.row))
+  // The tree and the detached group (which follows it) each draw their own lines.
+  const prefixes = [
+    ...treePrefixes(visible.filter(view => !view.row.detached).map(view => view.row)),
+    ...treePrefixes(visible.filter(view => view.row.detached).map(view => view.row)),
+  ]
 
   return visible.map((view, index) => ({ ...view, prefix: prefixes[index] ?? '' }))
 }
@@ -196,6 +200,7 @@ export const detailLines = (snapshot: Snapshot, selected: Selected | null, origi
     oneLine(row.command),
     `pid ${row.pid} · parent ${row.ppid} (${parent}) · started ${clockTime(row.startMs)} · ${formatBytes(row.rssKb)} · ${formatPercent(row.cpuPercent)} · up ${formatDuration(row.uptimeSeconds)}`,
   ]
+  if (row.detached) lines.push('detached: started in this session, no longer under Claude Code')
   const origin = origins ? originOf(origins, row) : null
   if (origin) return [...lines, originDetail(origin)]
   if (origins && unwrapCommand(row.command) !== null) return [...lines, 'origin unknown']
@@ -205,14 +210,36 @@ export const detailLines = (snapshot: Snapshot, selected: Selected | null, origi
 
 export type TotalLine = { label: string; mem: string; cpu: string }
 
-// The children's subtotal and the session total, when there are children.
+export type Subtotal = { count: number; kb: number; cpuPercent: number | null }
+
+// The processes under Claude Code and the detached ones, apart. A reading saved before detached
+// processes were tracked has none detached.
+export const subtotals = (snapshot: Snapshot): { under: Subtotal; detached: Subtotal } => {
+  const { childCount, childKb, childCpuPercent } = snapshot
+  const { detachedCount = 0, detachedKb = 0, detachedCpuPercent = 0 } = snapshot
+  const underCpu = childCpuPercent === null || detachedCpuPercent === null ? null : Math.max(0, childCpuPercent - detachedCpuPercent)
+
+  return {
+    under: { count: childCount - detachedCount, kb: childKb - detachedKb, cpuPercent: underCpu },
+    detached: { count: detachedCount, kb: detachedKb, cpuPercent: detachedCpuPercent },
+  }
+}
+
+// Each subtotal while it has processes, then the session total, when there are any.
 export const totalLines = (snapshot: Snapshot): TotalLine[] => {
   const { engine, children, childCount, childKb, childCpuPercent } = snapshot
   if (children === null || childCount === 0) return []
   const both = engine.cpuPercent !== null && childCpuPercent !== null ? engine.cpuPercent + childCpuPercent : null
+  const { under, detached } = subtotals(snapshot)
+  const line = (label: string, subtotal: Subtotal) => ({
+    label: `${label} (${subtotal.count})`,
+    mem: formatBytes(subtotal.kb),
+    cpu: formatPercent(subtotal.cpuPercent),
+  })
 
   return [
-    { label: `Child processes (${childCount})`, mem: formatBytes(childKb), cpu: formatPercent(childCpuPercent) },
+    ...(under.count > 0 ? [line('Child processes', under)] : []),
+    ...(detached.count > 0 ? [line('Detached', detached)] : []),
     { label: 'Total', mem: formatBytes(engine.rssKb + childKb), cpu: formatPercent(both) },
   ]
 }

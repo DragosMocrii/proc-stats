@@ -429,3 +429,31 @@ test('a command row names its origin; sorted views add the parent after it', () 
   const sorted = viewRows(snapshot, state({ sort: 'mem' }))[0]!
   expect(commandCell(sorted, 30, 'Monitor').parent).toBe(fit(' · Monitor ← cmd11', 10))
 })
+
+test('detached processes: a heading of their own in the tree, none when sorted; why they are not tracked', async ($, on) => {
+  const detached = buildSnapshot(
+    'linux',
+    10,
+    { ...now, detached: [proc(40, 1, { command: 'node server.js' })] },
+    { ...before, detached: [proc(40, 1)] },
+  )
+  let reading: { snapshot: typeof detached } = { snapshot: detached }
+  on('state.get', { plugin: 'proc-stats', key: 'reading' }, () => ({ value: { value: reading, version: 1 } }))
+  const ui = await $.ui.mount({
+    plugin: 'proc-stats',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'proc-stats',
+    props: { ...PANE_PROPS, bodyColumns: 80 },
+  })
+  expect(await ui.find({ type: 'Text', text: /^\s*Detached$/ })).toBeDefined()
+  expect(await ui.find({ key: 'pid:40' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Detached \(1\)/ })).toBeDefined()
+  await ui.press({ key: 'sort' })
+  expect(await ui.find({ type: 'Text', text: /^\s*Detached$/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /not tracked/ })).toBeUndefined()
+  reading = { snapshot: { ...snapshot, detachedOff: 'Detached processes are not tracked: the session mark could not be set.' } }
+  await ui.press({ key: 'sort' })
+  expect(await ui.find({ type: 'Text', text: /Detached processes are not tracked/ })).toBeDefined()
+  await ui.unmount()
+})

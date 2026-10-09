@@ -197,3 +197,55 @@ test('details say who started a Bash command, or that it is unknown', () => {
   expect(detailLines(snapshot, { pid: 11, startMs: 95_000 }, { calls: [], byPid: {} })?.[2]).toBe('origin unknown')
   expect(detailLines(snapshot, { pid: 12, startMs: 95_000 }, origins)?.length).toBe(2)
 })
+
+// Claude Code 10 → 11 (sleep); detached: 40 (a server) → 41 (its worker), started by this session.
+const withDetached = () => {
+  const before: Timed = { engine, children: [proc(11, 10)], detached: [proc(40, 1), proc(41, 40)], wallMs: 0 }
+  const now: Timed = {
+    engine: { ...engine, cpuSeconds: 1.5 },
+    children: [proc(11, 10, { command: 'sleep 30', rssKb: 1 * MB, uptimeSeconds: 105 })],
+    detached: [
+      proc(40, 1, { command: 'node server.js', rssKb: 30 * MB, cpuSeconds: 0.5, uptimeSeconds: 105 }),
+      proc(41, 40, { command: 'node worker', rssKb: 20 * MB, uptimeSeconds: 105 }),
+    ],
+    wallMs: 5000,
+  }
+  return buildSnapshot('linux', 10, now, before)
+}
+
+test('detached processes: their own tree lines after the tree; named detached when sorted', () => {
+  const snapshot = withDetached()
+  expect(viewRows(snapshot, state()).map(view => [view.row.pid, view.prefix + view.label])).toEqual([
+    [11, '└ sleep 30'],
+    [40, '└ node server.js'],
+    [41, '  └ node worker'],
+  ])
+  expect(viewRows(snapshot, state({ sort: 'mem' })).map(view => [view.row.pid, view.parent])).toEqual([
+    [40, 'detached'],
+    [41, 'node server.js'],
+    [11, 'Claude Code'],
+  ])
+})
+
+test('detached processes: a subtotal of their own, inside the total; details say so', () => {
+  const snapshot = withDetached()
+  expect(totalLines(snapshot)).toEqual([
+    { label: 'Child processes (1)', mem: '1MB', cpu: '0.0%' },
+    { label: 'Detached (2)', mem: '50MB', cpu: '10.0%' },
+    { label: 'Total', mem: '535MB', cpu: '20.0%' },
+  ])
+  const server = snapshot.children!.find(row => row.pid === 40)!
+  expect(detailLines(snapshot, { pid: 40, startMs: server.startMs })?.slice(1)).toEqual([
+    expect.stringContaining('pid 40 · parent 1 (pid 1)'),
+    'detached: started in this session, no longer under Claude Code',
+  ])
+  // Only detached processes: no subtotal for an empty tree.
+  const alone: Snapshot = { ...snapshot, children: snapshot.children!.filter(row => row.detached), childCount: 2, childKb: 50 * MB, childCpuPercent: 10 }
+  expect(totalLines(alone).map(line => line.label)).toEqual(['Detached (2)', 'Total'])
+})
+
+test('a reading saved before detached processes were tracked draws as before', () => {
+  const snapshot = tree()
+  const { detachedCount, detachedKb, detachedCpuPercent, ...older } = snapshot
+  expect(totalLines(older as Snapshot).map(line => line.label)).toEqual(['Child processes (4)', 'Total'])
+})

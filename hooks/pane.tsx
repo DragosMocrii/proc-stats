@@ -130,8 +130,16 @@ export const drawPane = (
     false,
     true,
   )
+  // In the tree, the detached group follows a heading of its own.
+  const firstDetached = state.sort === 'tree' ? views.findIndex(view => view.row.detached) : -1
+  const detachedHeading = (
+    <Box paddingX={ROW_PADDING_X}>
+      <Text bold dimColor>{`${pidCell('')}Detached`}</Text>
+    </Box>
+  )
   // Zebra rows count Claude Code's own as the first.
-  const childRows = views.map((view, index) =>
+  const childRows = views.flatMap((view, index) => [
+    ...(index === firstDetached ? [detachedHeading] : []),
     row(
       `pid:${view.row.pid}`,
       { pid: view.row.pid, startMs: view.row.startMs, hasChildren: view.hasChildren && state.sort === 'tree' },
@@ -141,7 +149,7 @@ export const drawPane = (
       index % 2 === 0,
       false,
     ),
-  )
+  ])
   const note = noteLine(snapshot)
   const totals = totalLines(snapshot)
   const details = detailLines(snapshot, state.selected, origins)
@@ -176,6 +184,11 @@ export const drawPane = (
       {note !== null && (
         <Box paddingX={ROW_PADDING_X}>
           <Text dimColor>{`${pidCell('')}${note}`}</Text>
+        </Box>
+      )}
+      {snapshot.detachedOff !== undefined && (
+        <Box paddingX={ROW_PADDING_X}>
+          <Text dimColor>{`${pidCell('')}${snapshot.detachedOff}`}</Text>
         </Box>
       )}
       {totals.length > 0 && (
