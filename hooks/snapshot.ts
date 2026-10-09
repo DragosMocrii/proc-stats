@@ -6,8 +6,9 @@ import type { Platform, Proc, Sample } from './stats'
 // A build can start hundreds of workers; the pane needs no more than this.
 export const MAX_ROWS = 500
 
-// The engine, and the processes it started (undefined when the table cannot be read).
-export type Timed = { engine: Sample; children?: Proc[]; wallMs: number }
+// The engine, the processes under it (undefined when the table cannot be read), and the detached
+// processes this session started (left out where they are not tracked).
+export type Timed = { engine: Sample; children?: Proc[]; detached?: Proc[]; wallMs: number }
 
 // CPU a process spent since the last reading, and as a share of one core. A pid
 // whose process is younger than the one seen before was reused: a new process,
@@ -46,6 +47,18 @@ export const treeOrder = (procs: Proc[], root: number) => {
   return ordered
 }
 
+// A parent no process has, for forestOrder's roots.
+const FOREST_ROOT = -1
+
+// Processes as a forest: each whose parent is not among them is a root, roots by pid.
+export const forestOrder = (procs: Proc[]) => {
+  const pids = new Set(procs.map(proc => proc.pid))
+  const byPid = new Map(procs.map(proc => [proc.pid, proc]))
+  const rooted = procs.map(proc => (pids.has(proc.ppid) ? proc : { ...proc, ppid: FOREST_ROOT }))
+
+  return treeOrder(rooted, FOREST_ROOT).map(({ proc, depth }) => ({ proc: byPid.get(proc.pid)!, depth }))
+}
+
 export const buildSnapshot = (
   platform: Platform,
   pid: number,
@@ -54,26 +67,30 @@ export const buildSnapshot = (
 ): Snapshot => {
   const elapsed = before ? (now.wallMs - before.wallMs) / 1000 : 0
   const isMeasured = before !== undefined && elapsed > 0
-  const was = new Map((before?.children ?? []).map(proc => [proc.pid, proc]))
+  const was = new Map([...(before?.children ?? []), ...(before?.detached ?? [])].map(proc => [proc.pid, proc]))
   const canCompare = isMeasured && before?.children !== undefined && now.children !== undefined
   let childDelta = 0
-  const rows = now.children
-    ? treeOrder(now.children, pid).map(({ proc, depth }): ProcRow => {
-        const cpu = canCompare ? procCpu(proc, was.get(proc.pid), elapsed) : undefined
-        childDelta += cpu?.delta ?? 0
+  let detachedDelta = 0
+  const toRow = ({ proc, depth }: { proc: Proc; depth: number }, isDetached: boolean): ProcRow => {
+    const cpu = canCompare ? procCpu(proc, was.get(proc.pid), elapsed) : undefined
+    childDelta += cpu?.delta ?? 0
+    if (isDetached) detachedDelta += cpu?.delta ?? 0
 
-        return {
-          pid: proc.pid,
-          ppid: proc.ppid,
-          depth,
-          command: proc.command,
-          rssKb: proc.rssKb,
-          cpuPercent: cpu ? cpu.percent : null,
-          uptimeSeconds: proc.uptimeSeconds,
-          startMs: Math.round(now.wallMs - proc.uptimeSeconds * 1000),
-        }
-      })
-    : null
+    return {
+      pid: proc.pid,
+      ppid: proc.ppid,
+      depth,
+      command: proc.command,
+      rssKb: proc.rssKb,
+      cpuPercent: cpu ? cpu.percent : null,
+      uptimeSeconds: proc.uptimeSeconds,
+      startMs: Math.round(now.wallMs - proc.uptimeSeconds * 1000),
+      ...(isDetached ? { detached: true as const } : {}),
+    }
+  }
+  // The tree under Claude Code, then the detached processes; the detached ones only with the tree.
+  const detachedRows = now.children ? forestOrder(now.detached ?? []).map(each => toRow(each, true)) : []
+  const rows = now.children ? [...treeOrder(now.children, pid).map(each => toRow(each, false)), ...detachedRows] : null
 
   return {
     platform,
@@ -91,6 +108,9 @@ export const buildSnapshot = (
     childCount: rows?.length ?? 0,
     childKb: rows?.reduce((sum, row) => sum + row.rssKb, 0) ?? 0,
     childCpuPercent: canCompare ? (childDelta / elapsed) * 100 : null,
+    detachedCount: detachedRows.length,
+    detachedKb: detachedRows.reduce((sum, row) => sum + row.rssKb, 0),
+    detachedCpuPercent: canCompare ? (detachedDelta / elapsed) * 100 : null,
   }
 }
 

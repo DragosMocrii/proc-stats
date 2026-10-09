@@ -28,6 +28,9 @@ const snapshot = (children: ProcRow[] | null): Snapshot => ({
   childCount: children?.length ?? 0,
   childKb: (children ?? []).reduce((total, each) => total + each.rssKb, 0),
   childCpuPercent: children === null ? null : children.reduce((total, each) => total + (each.cpuPercent ?? 0), 0),
+  detachedCount: 0,
+  detachedKb: 0,
+  detachedCpuPercent: 0,
 })
 
 const input = (over: Partial<ReportInput> = {}): ReportInput => ({

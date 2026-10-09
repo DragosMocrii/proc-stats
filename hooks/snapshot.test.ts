@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { engine, MB, proc } from './fixtures'
-import { buildSnapshot, procCpu, treeOrder } from './snapshot'
+import { buildSnapshot, forestOrder, procCpu, treeOrder } from './snapshot'
 import type { Timed } from './snapshot'
 
 test('tree order: depth first, each level by pid', () => {
@@ -58,4 +58,40 @@ test('children unreadable now: their CPU is unknown, not zero', () => {
   const before: Timed = { engine, children: [proc(11, 10, { cpuSeconds: 1 })], wallMs: 0 }
   const now: Timed = { engine: { ...engine, cpuSeconds: 1.5 }, children: undefined, wallMs: 5000 }
   expect(buildSnapshot('linux', 10, now, before).childCpuPercent).toBeNull()
+})
+
+test('forest order: each process whose parent is not among them is a root', () => {
+  const ordered = forestOrder([proc(42, 40), proc(41, 1), proc(43, 1), proc(44, 41)])
+  expect(ordered.map(({ proc, depth }) => [proc.pid, proc.ppid, depth])).toEqual([
+    [41, 1, 0],
+    [44, 41, 1],
+    [42, 40, 0],
+    [43, 1, 0],
+  ])
+})
+
+test('snapshot: detached processes follow the tree, marked, with their own subtotal inside the totals', () => {
+  const before: Timed = { engine, children: [proc(11, 10)], detached: [proc(41, 1, { cpuSeconds: 1 })], wallMs: 0 }
+  const now: Timed = {
+    engine,
+    children: [proc(11, 10)],
+    detached: [proc(41, 1, { cpuSeconds: 2, uptimeSeconds: 105 }), proc(44, 41, { rssKb: 5 * MB, uptimeSeconds: 3 })],
+    wallMs: 5000,
+  }
+  const snapshot = buildSnapshot('linux', 10, now, before)
+  expect(snapshot.children?.map(row => [row.pid, row.depth, row.detached ?? false, row.cpuPercent])).toEqual([
+    [11, 0, false, 0],
+    [41, 0, true, 20],
+    [44, 1, true, 0],
+  ])
+  expect([snapshot.childCount, snapshot.childKb, snapshot.childCpuPercent]).toEqual([3, 25 * MB, 20])
+  expect([snapshot.detachedCount, snapshot.detachedKb, snapshot.detachedCpuPercent]).toEqual([2, 15 * MB, 20])
+})
+
+test('snapshot: none detached, or the table unreadable: an empty subtotal', () => {
+  const now: Timed = { engine, children: [proc(11, 10)], wallMs: 5000 }
+  const quiet = buildSnapshot('linux', 10, now, { engine, children: [proc(11, 10)], wallMs: 0 })
+  expect([quiet.detachedCount, quiet.detachedKb, quiet.detachedCpuPercent]).toEqual([0, 0, 0])
+  const unread = buildSnapshot('linux', 10, { engine, children: undefined, detached: [proc(41, 1)], wallMs: 5000 }, undefined)
+  expect([unread.children, unread.detachedCount, unread.detachedCpuPercent]).toEqual([null, 0, null])
 })

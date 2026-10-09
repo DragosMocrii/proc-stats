@@ -13,6 +13,9 @@ const snapshot = (engineMb: number, childMb: number, extra: Partial<Snapshot> = 
   childCount: 0,
   childKb: childMb * MB,
   childCpuPercent: 0,
+  detachedCount: 0,
+  detachedKb: 0,
+  detachedCpuPercent: 0,
   ...extra,
 })
 

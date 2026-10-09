@@ -11,6 +11,8 @@ export type ProcRow = {
   uptimeSeconds: number
   // When it started, in ms since the epoch: the reading's time less its runtime, so it can move by a second between readings.
   startMs: number
+  // Set on a process this session started that no longer runs under Claude Code.
+  detached?: true
 }
 
 export type Snapshot = {
@@ -19,10 +21,16 @@ export type Snapshot = {
   engine: { rssKb: number; peakKb: number; cpuPercent: number | null; uptimeSeconds: number }
   // Null when the process table could not be read; capped for the pane.
   children: ProcRow[] | null
-  // Over every process found, capped rows included.
+  // Over every process found, capped rows included: those under Claude Code and the detached ones.
   childCount: number
   childKb: number
   childCpuPercent: number | null
+  // The detached processes alone (rows marked detached, after the tree).
+  detachedCount: number
+  detachedKb: number
+  detachedCpuPercent: number | null
+  // Why detached processes are not tracked, when they are not (Windows says nothing).
+  detachedOff?: string
 }
 
 export type Reading = { snapshot?: Snapshot; error?: string }
