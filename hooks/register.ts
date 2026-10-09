@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AlertState, History, Reading } from '../types'
+import type { AlertState, History, Point, Reading } from '../types'
 import { historyCapacity, pointOf, pointSpacingMs, pushPoint, shouldRecord } from './history'
 import { EMPTY_ALERTS, markerFor, stepAlerts, worse } from './alerts'
 import { drawPane } from './pane'
@@ -139,12 +139,20 @@ const startSampling = async ($: EngineInterface, settings: Settings) => {
         const now = { ...sample, wallMs: await $.clock.now() }
         const snapshot = buildSnapshot(platform, pid, now, before)
         await set({ snapshot: capRows(snapshot) })
+        // A get reads one moment, so the points for the alerts come from the update itself.
+        let points: Point[] = []
         try {
+          points = (await $.state.get(HISTORY)).value?.points ?? []
           const point = pointOf(snapshot, now.wallMs)
           if (point) {
-            await update($, history, kept =>
-              shouldRecord(kept, point, spacingMs) ? pushPoint(kept, point, capacity, windowMs) : kept,
-            )
+            await update($, history, kept => {
+              const next = shouldRecord(kept, point, spacingMs)
+                ? pushPoint(kept, point, capacity, windowMs)
+                : kept
+              points = next.points
+
+              return next
+            })
           }
         } catch {
           // The point is skipped; the reading above stands.
@@ -152,7 +160,6 @@ const startSampling = async ($: EngineInterface, settings: Settings) => {
         // Alerts after the history, which holds this reading's point; their failure costs the marker only.
         let marker = ''
         try {
-          const points = (await $.state.get(HISTORY)).value?.points ?? []
           const previous = (await $.state.get(ALERTS)).value ?? EMPTY_ALERTS
           const step = stepAlerts(previous, snapshot, points, now.wallMs, settings)
           await update($, alerts, () => step.state)

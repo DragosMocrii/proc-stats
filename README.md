@@ -53,7 +53,7 @@ In Claude Code's config menu (`/config`), under proc-stats:
 
 A value out of range is ignored and its default used.
 
-(The markers, toasts and sparklines arrive in later packages; the settings exist now so the config menu does not change shape again.)
+(The sparklines and the other pane features arrive in a later package; the settings exist now so the config menu does not change shape again.)
 
 ## Alerts
 
