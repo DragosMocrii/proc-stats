@@ -68,11 +68,11 @@ test('report: a busy session, every section', () => {
       'Now: Claude Code 484MB, 2.0% CPU · 6 child processes 860MB, 99.0% CPU · total 1.31GB, 101.0% CPU',
       'Peaks in the last 10 min: memory 1.27GB 2m 0s ago · CPU 145.0% 30s ago',
       'Heaviest processes:',
-      '  1. 812MB · 95.0% CPU · pid 12 · $ npm test · Bash',
-      '  2. 20MB · 3.0% CPU · pid 13 · cmd13',
-      '  3. 20MB · 1.0% CPU · pid 11 · cmd11',
-      '  4. 5MB · 0.0% CPU · pid 14 · cmd14',
-      '  5. 2MB · 0.0% CPU · pid 16 · cmd16',
+      '  812MB · 95.0% CPU · pid 12 · $ npm test · Bash',
+      '  20MB · 3.0% CPU · pid 13 · cmd13',
+      '  20MB · 1.0% CPU · pid 11 · cmd11',
+      '  5MB · 0.0% CPU · pid 14 · cmd14',
+      '  2MB · 0.0% CPU · pid 16 · cmd16',
       'Marker: 🟡 warn (memory warn, CPU none)',
       'Recent alerts:',
       '  1m 0s ago · cmd13 has used ~95% CPU for 1m 0s · pid 13 · /proc-stats',
@@ -122,7 +122,7 @@ test('report: the first reading has no CPU yet; one child; the alert level and w
       'Now: Claude Code 484MB, … CPU · 1 child process 20MB, … CPU · total 504MB, … CPU',
       'Peaks in the last 30 min: no history yet',
       'Heaviest processes:',
-      '  1. 20MB · … CPU · pid 11 · cmd11',
+      '  20MB · … CPU · pid 11 · cmd11',
       'Marker: 🔴 alert (memory none, CPU alert)',
       'Recent alerts: none',
     ].join('\n'),
@@ -132,7 +132,7 @@ test('report: the first reading has no CPU yet; one child; the alert level and w
 test('report: a long command is cut to 80 code points', () => {
   const long = row(11, 20, 1, `node ${'x'.repeat(100)}`)
   const line = reportText(input({ reading: { snapshot: snapshot([long]) } })).split('\n')[4]
-  expect(line).toBe(`  1. 20MB · 1.0% CPU · pid 11 · node ${'x'.repeat(74)}…`)
+  expect(line).toBe(`  20MB · 1.0% CPU · pid 11 · node ${'x'.repeat(74)}…`)
 })
 
 test('report: detached processes, their subtotal and their own list', () => {
@@ -150,12 +150,12 @@ test('report: detached processes, their subtotal and their own list', () => {
       'Now: Claude Code 484MB, 2.0% CPU · 1 child process 20MB, 1.0% CPU · 2 detached 330MB, 14.0% CPU · total 834MB, 17.0% CPU',
       'Peaks in the last 10 min: no history yet',
       'Heaviest processes:',
-      '  1. 300MB · 12.0% CPU · pid 40 · node server.js · detached',
-      '  2. 30MB · 2.0% CPU · pid 41 · node worker · detached',
-      '  3. 20MB · 1.0% CPU · pid 11 · cmd11',
+      '  300MB · 12.0% CPU · pid 40 · node server.js · detached',
+      '  30MB · 2.0% CPU · pid 41 · node worker · detached',
+      '  20MB · 1.0% CPU · pid 11 · cmd11',
       'Detached processes:',
-      '  1. 300MB · 12.0% CPU · pid 40 · node server.js',
-      '  2. 30MB · 2.0% CPU · pid 41 · node worker',
+      '  300MB · 12.0% CPU · pid 40 · node server.js',
+      '  30MB · 2.0% CPU · pid 41 · node worker',
       'Marker: none',
       'Recent alerts: none',
     ].join('\n'),
@@ -168,7 +168,7 @@ test('report: only detached processes, more than it lists', () => {
   const lines = reportText(input({ reading: { snapshot: alone } })).split('\n')
   expect(lines[1]).toBe('Now: Claude Code 484MB, 2.0% CPU · no child processes · 12 detached 78MB, 0.0% CPU · total 562MB, 2.0% CPU')
   expect(lines[9]).toBe('Detached processes (10 of 12):')
-  expect(lines[19]).toBe('  10. 3MB · 0.0% CPU · pid 49 · cmd49')
+  expect(lines[19]).toBe('  3MB · 0.0% CPU · pid 49 · cmd49')
   expect(lines[20]).toBe('Marker: none')
 })
 
@@ -178,4 +178,13 @@ test('report: says when detached processes are not tracked', () => {
     'Now: Claude Code 484MB, 2.0% CPU · no child processes',
     'Detached processes are not tracked: the session mark could not be set.',
   ])
+})
+
+// Claude Code shows a command's output as Markdown: a numbered or bulleted line would become a list,
+// which runs on into the next one and takes in the lines after it.
+test('report: no line reads as a Markdown list', () => {
+  const server = { ...row(40, 300, 12, 'node server.js'), ppid: 1, detached: true as const }
+  const detached: Snapshot = { ...snapshot([row(11, 20, 1), server]), detachedCount: 1, detachedKb: 300 * MB, detachedCpuPercent: 12 }
+  const lines = reportText(input({ reading: { snapshot: detached } })).split('\n')
+  expect(lines.filter(line => /^\s*(\d+[.)]|[-*+])\s/.test(line))).toEqual([])
 })

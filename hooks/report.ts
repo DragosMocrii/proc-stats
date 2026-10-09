@@ -43,13 +43,14 @@ const peakOf = (points: Point[], pick: (point: Point) => number) =>
 const byWeight = (rows: ProcRow[]) =>
   [...rows].sort((a, b) => b.rssKb - a.rssKb || (b.cpuPercent ?? 0) - (a.cpuPercent ?? 0) || a.pid - b.pid)
 
-// One listed process: its figures, command and origin, and (where asked) whether it is detached.
-const processLine = (row: ProcRow, index: number, origins: Origins, isDetachedShown: boolean) => {
+// One listed process: its figures, command and origin, and (where asked) whether it is detached. Not
+// numbered: Claude Code shows the report as Markdown, where a numbered line starts a list that runs on.
+const processLine = (row: ProcRow, origins: Origins, isDetachedShown: boolean) => {
   const origin = originOf(origins, row)
   const from = origin ? ` · ${originLabel(origin)}` : ''
   const detached = isDetachedShown && row.detached ? ' · detached' : ''
 
-  return `  ${index + 1}. ${formatBytes(row.rssKb)} · ${formatPercent(row.cpuPercent)} CPU · pid ${row.pid} · ${cut(labelOf(row.command))}${from}${detached}`
+  return `  ${formatBytes(row.rssKb)} · ${formatPercent(row.cpuPercent)} CPU · pid ${row.pid} · ${cut(labelOf(row.command))}${from}${detached}`
 }
 
 // A subtotal in words: `2 child processes 20MB, 1.0% CPU`.
@@ -90,13 +91,13 @@ export const reportText = ({ reading, points, alerts, origins, now, historyMinut
 
   if (children && children.length > 0) {
     lines.push('Heaviest processes:')
-    byWeight(children).slice(0, HEAVIEST).forEach((row, index) => lines.push(processLine(row, index, origins, true)))
+    byWeight(children).slice(0, HEAVIEST).forEach(row => lines.push(processLine(row, origins, true)))
     const detachedRows = children.filter(row => row.detached)
     if (detachedRows.length > 0) {
       lines.push(
         detached.count > DETACHED_LISTED ? `Detached processes (${DETACHED_LISTED} of ${detached.count}):` : 'Detached processes:',
       )
-      byWeight(detachedRows).slice(0, DETACHED_LISTED).forEach((row, index) => lines.push(processLine(row, index, origins, false)))
+      byWeight(detachedRows).slice(0, DETACHED_LISTED).forEach(row => lines.push(processLine(row, origins, false)))
     }
   }
 
