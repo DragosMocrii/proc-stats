@@ -19,17 +19,13 @@ mem (484 + 215)MB · peak 530MB · cpu (2.4 + 98.7)% · up 12m 4s
 
 ## Processes pane
 
-`/proc-stats` opens a task-manager pane: Claude Code's own row, every process below it as a tree (PID, command, memory, CPU, how long it has run), and totals for its child processes and for everything together.
+`/proc-stats` opens a task-manager pane and gives it the keyboard (Esc hands it back to the prompt; click the pane or press ctrl+x then tab to return):
 
-```
-PID     COMMAND                                   MEM     CPU    TIME
-187782  Claude Code                             484MB    2.4%  12m 4s
-211146  └ bash -c timeout 15 python3 -c ...       4MB    0.0%     20s
-211147    └ python3 -c ...                      200MB   98.7%     20s
-
-        Child processes (2)                     204MB   98.7%
-        Total                                   688MB  101.1%
-```
+- **Rows:** Claude Code's own row, then every process below it as a tree. A Bash command Claude ran shows as `$ <command>`; ▾/▸ marks a row with processes under it.
+- **↑ / ↓** move between rows; the row you land on is selected and its full command, pid, parent, start time, memory and CPU show under the table.
+- **Enter or a click** selects a row, and on a row with processes under it collapses or expands it (collapsed, it shows its subtree's totals).
+- **s** sorts by CPU, memory or runtime (highest first, each row followed by its parent), then back to the tree.
+- **k** stops the selected process and everything it started: it asks first (**y** Stop, **n** Cancel), sends SIGTERM (Windows: `taskkill /T`), and after 3 seconds offers **f** Force stop (SIGKILL) if anything is still running. Claude Code's own row cannot be stopped.
 
 TIME, then PID, give way on a narrow pane.
 
