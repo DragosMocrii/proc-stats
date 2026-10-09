@@ -1,15 +1,17 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AlertState, History, Point, Reading } from '../types'
+import type { AlertState, History, PaneState, Point, Reading } from '../types'
 import { historyCapacity, pointOf, pointSpacingMs, pushPoint, shouldRecord } from './history'
 import { EMPTY_ALERTS, markerFor, stepAlerts, worse } from './alerts'
 import { drawPane } from './pane'
+import type { PaneHandlers } from './pane'
 import { buildSnapshot, capRows } from './snapshot'
 import type { Timed } from './snapshot'
 import { readSettings } from './settings'
 import type { Settings } from './settings'
 import { statusLine } from './status'
+import { cycleSort, EMPTY_PANE, pruneState, toggleCollapsed } from './view'
 import { childPids, linuxEngine, linuxProc, macReading, windowsReading } from './sampler'
 import type { Gathered } from './sampler'
 import { isComplete, parsePsTable, powerShellSample } from './stats'
@@ -18,7 +20,10 @@ import type { Platform, Proc } from './stats'
 const PANE = 'proc-stats'
 const COMMAND = 'proc-stats'
 
-const reading = atom({ plugin: 'proc-stats', key: 'reading' } as const, {} as Reading)
+const READING = { plugin: 'proc-stats', key: 'reading' } as const
+const PANE_STATE = { plugin: 'proc-stats', key: 'pane' } as const
+const reading = atom(READING, {} as Reading)
+const pane = atom(PANE_STATE, EMPTY_PANE as PaneState)
 const isOpen = atom({ plugin: 'proc-stats', key: 'isOpen' } as const, false)
 const HISTORY = { plugin: 'proc-stats', key: 'history' } as const
 const ALERTS = { plugin: 'proc-stats', key: 'alerts' } as const
@@ -117,6 +122,17 @@ const readProcesses = (
   }
 }
 
+// What the pane's presses do. Built here because they call $, which pane.tsx never receives.
+const paneHandlers = ($: EngineInterface): PaneHandlers => ({
+  onRow: target =>
+    void update($, pane, state => ({
+      ...state,
+      selected: { pid: target.pid, startMs: target.startMs },
+      collapsed: target.hasChildren ? toggleCollapsed(state.collapsed, target.pid) : state.collapsed,
+    })),
+  onSort: () => void update($, pane, state => ({ ...state, sort: cycleSort(state.sort) })),
+})
+
 // One loop feeds both views: the status line, and the reading the pane draws.
 const startSampling = async ($: EngineInterface, settings: Settings) => {
   const set = (next: Reading) => update($, reading, () => next)
@@ -139,6 +155,13 @@ const startSampling = async ($: EngineInterface, settings: Settings) => {
         const now = { ...sample, wallMs: await $.clock.now() }
         const snapshot = buildSnapshot(platform, pid, now, before)
         await set({ snapshot: capRows(snapshot) })
+        try {
+          const kept = (await $.state.get(PANE_STATE)).value ?? EMPTY_PANE
+          const pruned = pruneState(kept, snapshot)
+          if (JSON.stringify(pruned) !== JSON.stringify(kept)) await update($, pane, () => pruned)
+        } catch {
+          // The pane keeps its state this reading.
+        }
         // A get reads one moment, so the points for the alerts come from the update itself.
         let points: Point[] = []
         try {
@@ -207,7 +230,7 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: COMMAND }, async $ => {
-    const opened = await $.ui.open(OPEN)
+    const opened = await $.ui.open({ ...OPEN, focus: true })
     await update($, isOpen, () => true)
 
     return { text: opened.isPlaced ? 'Processes pane opened.' : 'Processes pane could not be placed.' }
@@ -224,6 +247,19 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
-    drawPane($.ui.resolve(e), await read($, reading), e.props.bodyColumns),
+    drawPane($.ui.resolve(e), await read($, reading), await read($, pane), e.props.bodyColumns, paneHandlers($)),
   )
+
+  // Arrow keys move the focus ring over the rows; the row it lands on is the selection.
+  on('ui.focus', { requestId: PANE }, async ($, e, next) => {
+    const moved = await next(e)
+    const pid = e.element?.startsWith('pid:') ? Number(e.element.slice(4)) : null
+    if (pid !== null && !('deny' in moved)) {
+      const snapshot = (await $.state.get(READING)).value?.snapshot
+      const row = snapshot?.children?.find(each => each.pid === pid)
+      await update($, pane, state => ({ ...state, selected: { pid, startMs: row?.startMs ?? 0 } }))
+    }
+
+    return moved
+  }).catch(($, e, next) => next(e))
 }

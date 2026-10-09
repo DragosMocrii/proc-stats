@@ -70,6 +70,7 @@ declare module 'claude-code' {
     // isOpen: whether the person has the pane open, so a reload can reopen it.
     // history: the session totals over the last historyMinutes, for alerts and sparklines.
     // alerts: the marker levels and each child process's toast tracking, kept across reloads.
-    'proc-stats': { reading: Reading; isOpen: boolean; history: History; alerts: AlertState }
+    // pane: the Processes pane's sort, collapsed rows, selection and stop in progress.
+    'proc-stats': { reading: Reading; isOpen: boolean; history: History; alerts: AlertState; pane: PaneState }
   }
 }

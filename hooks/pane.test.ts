@@ -1,53 +1,20 @@
 import { expect, test } from 'claude-code/testing'
 
+import type { PaneState } from '../types'
 import { engine, MB, proc } from './fixtures'
-import { paneColumns, paneLines, stripes } from './pane'
-import { buildSnapshot, capRows } from './snapshot'
+import { commandCell, paneColumns } from './pane'
+import { buildSnapshot } from './snapshot'
 import type { Timed } from './snapshot'
+import { EMPTY_PANE, viewRows } from './view'
 
-test('pane: Claude Code, its processes as a tree, then the totals', () => {
-  const before: Timed = { engine, children: [proc(11, 10)], wallMs: 0 }
-  const now: Timed = {
-    engine: { ...engine, cpuSeconds: 1.5 },
-    children: [proc(11, 10, { cpuSeconds: 1 }), proc(12, 11, { command: 'python3 -c x', cpuSeconds: 0 })],
-    wallMs: 5000,
-  }
-  const lines = paneLines(buildSnapshot('linux', 10, now, before))
-  expect(lines.map(line => [line.style, line.pid, line.command.trimStart(), line.mem, line.cpu])).toEqual([
-    ['header', 'PID', 'COMMAND', 'MEM', 'CPU'],
-    ['own', '10', 'Claude Code', '484MB', '10.0%'],
-    ['child', '11', '└ cmd11', '10MB', '20.0%'],
-    ['child', '12', '└ python3 -c x', '10MB', '0.0%'],
-    ['total', '', 'Child processes (2)', '20MB', '20.0%'],
-    ['total', '', 'Total', '504MB', '30.0%'],
-  ])
-  expect(lines[2]!.command).toBe('└ cmd11')
-  expect(lines[3]!.command).toBe('  └ python3 -c x')
-})
-
-test('zebra rows: every other process row, never the header or totals', () => {
-  const now: Timed = { engine, children: [proc(11, 10), proc(12, 11), proc(13, 10)], wallMs: 0 }
-  const lines = paneLines(buildSnapshot('linux', 10, now, undefined))
-  expect(lines.map(line => line.style)).toEqual(['header', 'own', 'child', 'child', 'child', 'total', 'total'])
-  expect(stripes(lines)).toEqual([false, false, true, false, true, false, false])
-})
-
-test('pane: no processes, an unreadable table, and capped rows', () => {
-  const now: Timed = { engine, children: [], wallMs: 0 }
-  expect(
-    paneLines(buildSnapshot('linux', 10, now, undefined))
-      .at(-1)?.command,
-  ).toBe('No child processes')
-  expect(
-    paneLines(buildSnapshot('linux', 10, { ...now, children: undefined }, undefined))
-      .at(-1)?.command,
-  ).toBe('Child process list unavailable')
-  const many = Array.from({ length: 502 }, (_, i) => proc(100 + i, 10))
-  const capped = capRows(buildSnapshot('linux', 10, { ...now, children: many }, undefined))
-  expect(capped.children?.length).toBe(500)
-  expect(capped.childCount).toBe(502)
-  expect(paneLines(capped).some(line => line.command.trim() === '… 2 more')).toBe(true)
-})
+const before: Timed = { engine, children: [proc(11, 10), proc(12, 11)], wallMs: 0 }
+const now: Timed = {
+  engine: { ...engine, cpuSeconds: 1.5 },
+  children: [proc(11, 10, { cpuSeconds: 1 }), proc(12, 11, { command: 'python3 -c x', rssKb: 20 * MB })],
+  wallMs: 5000,
+}
+const snapshot = buildSnapshot('linux', 10, now, before)
+const state = (extra: Partial<PaneState> = {}): PaneState => ({ ...EMPTY_PANE, ...extra })
 
 test('pane columns: TIME then PID give way, the command keeps the rest', () => {
   expect(paneColumns(80)).toEqual({ showPid: true, showTime: true, commandWidth: 48 })
@@ -55,60 +22,59 @@ test('pane columns: TIME then PID give way, the command keeps the rest', () => {
   expect(paneColumns(30)).toEqual({ showPid: false, showTime: false, commandWidth: 14 })
 })
 
-test('the pane draws a valid tree before the first reading', async $ => {
+test('command cells: tree lines and collapse marker; the parent after it when sorted', () => {
+  const [parent, child] = viewRows(snapshot, state())
+  expect(commandCell(parent!, 20).main).toBe('└ ▾ cmd11           ')
+  expect(commandCell(child!, 20).main).toBe('  └ python3 -c x    ')
+  const collapsed = viewRows(snapshot, state({ collapsed: [11] }))[0]!
+  expect(commandCell(collapsed, 20).main).toBe('└ ▸ cmd11           ')
+  const sorted = viewRows(snapshot, state({ sort: 'mem' }))[0]!
+  expect(commandCell(sorted, 30)).toEqual({ main: 'python3 -c x          ', parent: ' ← cmd11' })
+})
+
+const PANE_PROPS = {
+  title: 'Processes',
+  isFocused: true,
+  placement: 'dock' as const,
+  scroll: { offset: 0, bodyRows: 30 },
+  view: {},
+}
+
+test('the pane draws before the first reading', async $ => {
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({
       plugin: 'proc-stats',
       surface,
       component: 'Pane',
       requestId: 'proc-stats',
-      props: {
-        title: 'Processes',
-        isFocused: false,
-        bodyColumns: 80,
-        placement: 'dock',
-        scroll: { offset: 0, bodyRows: 20 },
-        view: {},
-      },
+      props: { ...PANE_PROPS, bodyColumns: 80 },
     })
     expect(await ui.find({ type: 'Text', text: /Reading/ })).toBeDefined()
     await ui.unmount()
   }
 })
 
-test('the pane draws a valid table, wide and narrow', async ($, on) => {
-  const before: Timed = { engine, children: [proc(11, 10)], wallMs: 0 }
-  const now: Timed = {
-    engine: { ...engine, cpuSeconds: 1.5 },
-    children: [proc(11, 10, { cpuSeconds: 1 }), proc(12, 11, { command: 'python3 -c x' })],
-    wallMs: 5000,
-  }
-  const snapshot = buildSnapshot('linux', 10, now, before)
-  // Stands in for the sampler's write: the reading the pane reads.
-  on('state.get', { plugin: 'proc-stats', key: 'reading' }, () => ({
-    value: { value: { snapshot }, version: 1 },
-  }))
-  for (const [surface, bodyColumns] of [
-    ['terminal', 80],
-    ['terminal', 30],
-    ['desktop', 80],
-  ] as const) {
+test('rows are buttons; a press selects and shows details; s cycles the sort', async ($, on) => {
+  on('state.get', { plugin: 'proc-stats', key: 'reading' }, () => ({ value: { value: { snapshot }, version: 1 } }))
+  for (const [surface, bodyColumns] of [['terminal', 80], ['terminal', 30], ['desktop', 80]] as const) {
     const ui = await $.ui.mount({
       plugin: 'proc-stats',
       surface,
       component: 'Pane',
       requestId: 'proc-stats',
-      props: {
-        title: 'Processes',
-        isFocused: false,
-        bodyColumns,
-        placement: 'dock',
-        scroll: { offset: 0, bodyRows: 20 },
-        view: {},
-      },
+      props: { ...PANE_PROPS, bodyColumns },
     })
-    expect(await ui.find({ type: 'Text', text: /python3 -c x/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: 'Total' })).toBeDefined()
+    expect(await ui.find({ key: 'pid:12' })).toBeDefined()
+    expect(await ui.find({ key: 'pid:10' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Total/ })).toBeDefined()
+    await ui.press({ key: 'pid:12' })
+    expect(await ui.find({ type: 'Text', text: 'python3 -c x' })).toBeDefined()
+    expect((await ui.find({ key: 'sort' }))?.text).toContain('Sort: tree')
+    await ui.press({ key: 'sort' })
+    expect((await ui.find({ key: 'sort' }))?.text).toContain('Sort: cpu')
+    await ui.press({ key: 'sort' })
+    await ui.press({ key: 'sort' })
+    await ui.press({ key: 'sort' })
     await ui.unmount()
   }
 })

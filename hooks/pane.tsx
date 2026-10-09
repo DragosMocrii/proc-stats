@@ -1,8 +1,10 @@
 import type { Elements, RenderSurface } from 'claude-code'
 
-import type { ProcRow, Reading, Snapshot } from '../types'
+import type { PaneState, Reading } from '../types'
 import { formatBytes, formatDuration, formatPercent } from './format'
-import { treePrefixes } from './view'
+import { confirmText } from './stop'
+import { detailLines, fit, isSelected, noteLine, totalLines, viewRows } from './view'
+import type { ViewRow } from './view'
 
 const PID_WIDTH = 7
 const NUMBER_WIDTH = 7
@@ -32,76 +34,36 @@ export const paneColumns = (bodyColumns: number) => {
   }
 }
 
-export type Line = {
-  pid: string
-  command: string
-  mem: string
-  cpu: string
-  time: string
-  style: 'header' | 'own' | 'child' | 'total' | 'note'
+export type RowTarget = { pid: number; startMs: number; hasChildren: boolean }
+
+// What the pane's presses do; register.ts builds them. Stop handlers are optional: without them no stop is offered.
+export type PaneHandlers = {
+  onRow: (target: RowTarget) => void
+  onSort: () => void
+  onStop?: () => void
+  onConfirm?: () => void
+  onCancel?: () => void
+  onForce?: () => void
 }
 
-const childLine = (row: ProcRow, prefix: string): Line => ({
-  pid: String(row.pid),
-  command: `${prefix}${row.command}`,
-  mem: formatBytes(row.rssKb),
-  cpu: formatPercent(row.cpuPercent),
-  time: formatDuration(row.uptimeSeconds),
-  style: 'child',
-})
+const marker = (view: ViewRow) => (view.hasChildren ? (view.isCollapsed ? '▸ ' : '▾ ') : '')
 
-// Zebra rows: every other process row, Claude Code's own counted first.
-export const stripes = (lines: Line[]) => {
-  let row = 0
+// The command cell: tree lines, the collapse marker and the label; in sorted views the parent after it.
+export const commandCell = (view: ViewRow, width: number) => {
+  const main = `${view.prefix}${marker(view)}${view.label}`
+  if (view.parent === null) return { main: fit(main, width), parent: '' }
+  const tail = ` ← ${view.parent}`
+  const tailWidth = Math.min(Array.from(tail).length, Math.floor(width / 3))
 
-  return lines.map(line => (line.style === 'own' || line.style === 'child') && row++ % 2 === 1)
-}
-
-// Claude Code first, the processes below it as a tree, then the totals.
-export const paneLines = (snapshot: Snapshot): Line[] => {
-  const { engine, children, childCpuPercent } = snapshot
-  const lines: Line[] = [
-    { pid: 'PID', command: 'COMMAND', mem: 'MEM', cpu: 'CPU', time: 'TIME', style: 'header' },
-    {
-      pid: String(snapshot.pid),
-      command: 'Claude Code',
-      mem: formatBytes(engine.rssKb),
-      cpu: formatPercent(engine.cpuPercent),
-      time: formatDuration(engine.uptimeSeconds),
-      style: 'own',
-    },
-  ]
-  if (children === null) {
-    const note = 'Child process list unavailable'
-
-    return [...lines, { pid: '', command: note, mem: '', cpu: '', time: '', style: 'note' }]
-  }
-  const prefixes = treePrefixes(children)
-  lines.push(...children.map((row, index) => childLine(row, prefixes[index] ?? '')))
-  if (children.length === 0) {
-    const note = 'No child processes'
-
-    return [...lines, { pid: '', command: note, mem: '', cpu: '', time: '', style: 'note' }]
-  }
-  const { childCount, childKb } = snapshot
-  const both =
-    engine.cpuPercent !== null && childCpuPercent !== null ? engine.cpuPercent + childCpuPercent : null
-  const hidden = childCount - children.length
-  if (hidden > 0) {
-    lines.push({ pid: '', command: `… ${hidden} more`, mem: '', cpu: '', time: '', style: 'note' })
-  }
-
-  return [
-    ...lines,
-    { pid: '', command: `Child processes (${childCount})`, mem: formatBytes(childKb), cpu: formatPercent(childCpuPercent), time: '', style: 'total' },
-    { pid: '', command: 'Total', mem: formatBytes(engine.rssKb + childKb), cpu: formatPercent(both), time: '', style: 'total' },
-  ]
+  return { main: fit(main, width - tailWidth), parent: fit(tail, tailWidth) }
 }
 
 export const drawPane = (
-  { Box, Text }: Elements[RenderSurface],
+  { Box, Text, Button }: Elements[RenderSurface],
   { snapshot, error }: Reading,
+  state: PaneState,
   bodyColumns: number,
+  handlers: PaneHandlers,
 ) => {
   if (!snapshot) {
     return (
@@ -111,50 +73,140 @@ export const drawPane = (
     )
   }
   const { showPid, showTime, commandWidth } = paneColumns(bodyColumns - (PADDING_X + ROW_PADDING_X) * 2)
-  const lines = paneLines(snapshot)
-  const striped = stripes(lines)
-  const cell = (text: string, width: number, line: Line, background: string | undefined, isRight = false) => (
-    <Box width={width} justifyContent={isRight ? 'flex-end' : 'flex-start'}>
-      <Text
-        wrap="truncate-end"
-        backgroundColor={background}
-        color={line.style === 'header' ? HEADER_TEXT : undefined}
-        bold={line.style === 'header' || line.style === 'own' || line.style === 'total'}
-        dimColor={line.style === 'note'}
-      >
-        {text}
-      </Text>
-    </Box>
+  const views = viewRows(snapshot, state)
+  const numbers = (mem: string, cpu: string, time: string) =>
+    ` ${fit(mem, NUMBER_WIDTH, true)} ${fit(cpu, NUMBER_WIDTH, true)}${showTime ? ` ${fit(time, TIME_WIDTH, true)}` : ''}`
+  const pidCell = (pid: string) => (showPid ? `${fit(pid, PID_WIDTH)} ` : '')
+
+  // One row: a plain keyed Button of Text cells, striped by its Box; the selected row underlined.
+  const row = (
+    key: string,
+    target: RowTarget,
+    command: { main: string; parent: string },
+    figures: string,
+    pid: string,
+    isStriped: boolean,
+    isBold: boolean,
+  ) => {
+    const background = isStriped ? STRIPE_COLOR : undefined
+    const underline = isSelected(target, state.selected) || (target.pid === snapshot.pid && state.selected?.pid === snapshot.pid)
+    const cells =
+      command.parent === ''
+        ? [
+            <Text backgroundColor={background} bold={isBold} underline={underline}>{`${pidCell(pid)}${command.main}`}</Text>,
+            <Text backgroundColor={background} bold={isBold}>{figures}</Text>,
+          ]
+        : [
+            <Text backgroundColor={background} bold={isBold} underline={underline}>{`${pidCell(pid)}${command.main}`}</Text>,
+            <Text backgroundColor={background} dimColor>{command.parent}</Text>,
+            <Text backgroundColor={background} bold={isBold}>{figures}</Text>,
+          ]
+
+    return (
+      <Box paddingX={ROW_PADDING_X} backgroundColor={background}>
+        <Button key={key} plain onPress={() => handlers.onRow(target)}>
+          {cells}
+        </Button>
+      </Box>
+    )
+  }
+
+  const { engine } = snapshot
+  const engineRow = row(
+    `pid:${snapshot.pid}`,
+    { pid: snapshot.pid, startMs: 0, hasChildren: false },
+    { main: fit('Claude Code', commandWidth), parent: '' },
+    numbers(formatBytes(engine.rssKb), formatPercent(engine.cpuPercent), formatDuration(engine.uptimeSeconds)),
+    String(snapshot.pid),
+    false,
+    true,
   )
+  // Zebra rows count Claude Code's own as the first.
+  const childRows = views.map((view, index) =>
+    row(
+      `pid:${view.row.pid}`,
+      { pid: view.row.pid, startMs: view.row.startMs, hasChildren: view.hasChildren && state.sort === 'tree' },
+      commandCell(view, commandWidth),
+      numbers(formatBytes(view.rssKb), formatPercent(view.cpuPercent), formatDuration(view.row.uptimeSeconds)),
+      String(view.row.pid),
+      index % 2 === 0,
+      false,
+    ),
+  )
+  const note = noteLine(snapshot)
+  const totals = totalLines(snapshot)
+  const details = detailLines(snapshot, state.selected)
+  const stop = state.stop
+  const canStop =
+    handlers.onStop !== undefined &&
+    state.selected !== null &&
+    state.selected.pid !== snapshot.pid &&
+    views.some(view => isSelected(view.row, state.selected))
 
   return (
     <Box flexDirection="column" paddingX={PADDING_X} paddingBottom={PADDING_BOTTOM}>
       <Box marginBottom={1} paddingX={ROW_PADDING_X}>
         <Text dimColor>
-          peak {formatBytes(snapshot.engine.peakKb)} · {snapshot.platform}
+          peak {formatBytes(engine.peakKb)} · {snapshot.platform}
           {snapshot.platform === 'mac' ? ' (peak is the highest seen)' : ''}
         </Text>
       </Box>
-      {lines.map((line, index) => {
-        const background =
-          line.style === 'header' ? HEADER_COLOR : striped[index] ? STRIPE_COLOR : undefined
-
-        return (
-          <Box
-            flexDirection="row"
-            columnGap={1}
-            paddingX={ROW_PADDING_X}
-            backgroundColor={background}
-            marginTop={line.style === 'total' && line.command !== 'Total' ? 1 : 0}
-          >
-            {showPid && cell(line.pid, PID_WIDTH, line, background)}
-            {cell(line.command, commandWidth, line, background)}
-            {cell(line.mem, NUMBER_WIDTH, line, background, true)}
-            {cell(line.cpu, NUMBER_WIDTH, line, background, true)}
-            {showTime && cell(line.time, TIME_WIDTH, line, background, true)}
-          </Box>
-        )
-      })}
+      <Box paddingX={ROW_PADDING_X} backgroundColor={HEADER_COLOR}>
+        <Text color={HEADER_TEXT} bold>
+          {`${pidCell('PID')}${fit(state.sort === 'tree' ? 'COMMAND' : `COMMAND (by ${state.sort})`, commandWidth)}${numbers('MEM', 'CPU', 'TIME')}`}
+        </Text>
+      </Box>
+      {engineRow}
+      {childRows}
+      {note !== null && (
+        <Box paddingX={ROW_PADDING_X}>
+          <Text dimColor>{`${pidCell('')}${note}`}</Text>
+        </Box>
+      )}
+      {totals.length > 0 && (
+        <Box flexDirection="column" marginTop={1} paddingX={ROW_PADDING_X}>
+          {totals.map(total => (
+            <Text bold>{`${pidCell('')}${fit(total.label, commandWidth)}${numbers(total.mem, total.cpu, '')}`}</Text>
+          ))}
+        </Box>
+      )}
+      {details !== null && (
+        <Box flexDirection="column" marginTop={1} paddingX={ROW_PADDING_X}>
+          {details.map((line, index) => (
+            <Text dimColor={index > 0}>{line}</Text>
+          ))}
+        </Box>
+      )}
+      <Box flexDirection="row" columnGap={2} marginTop={1} paddingX={ROW_PADDING_X}>
+        {stop === null && (
+          <Button key="sort" plain hotkey="s" onPress={handlers.onSort}>
+            {`Sort: ${state.sort}`}
+          </Button>
+        )}
+        {stop === null && canStop && handlers.onStop && (
+          <Button key="stop" plain hotkey="k" onPress={handlers.onStop}>
+            Stop process
+          </Button>
+        )}
+        {stop?.phase === 'confirm' && <Text>{confirmText(stop)}</Text>}
+        {stop?.phase === 'confirm' && handlers.onConfirm && (
+          <Button key="confirm" plain hotkey="y" onPress={handlers.onConfirm}>
+            Stop
+          </Button>
+        )}
+        {(stop?.phase === 'confirm' || stop?.phase === 'stuck') && handlers.onCancel && (
+          <Button key="cancel" plain hotkey="n" onPress={handlers.onCancel}>
+            {stop.phase === 'confirm' ? 'Cancel' : 'Dismiss'}
+          </Button>
+        )}
+        {(stop?.phase === 'sent' || stop?.phase === 'forced') && <Text dimColor>Stopping…</Text>}
+        {stop?.phase === 'stuck' && <Text>Still running after 3 s.</Text>}
+        {stop?.phase === 'stuck' && handlers.onForce && (
+          <Button key="force" plain hotkey="f" onPress={handlers.onForce}>
+            Force stop
+          </Button>
+        )}
+      </Box>
     </Box>
   )
 }
