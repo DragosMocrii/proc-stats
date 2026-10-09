@@ -6,13 +6,13 @@ A Claude Code mod that pins a status line with the session's own resource use, a
 mem 484MB · peak 530MB · cpu 2.4% · up 12m 4s
 ```
 
-While the session has processes running under it (Bash commands, watchers, test runs, local MCP servers), their share is added after a `+`:
+While the session has processes running under it (Bash commands, watchers, test runs, local MCP servers), or ones it started that have since detached, their share is added after a `+`:
 
 ```
 mem (484 + 215)MB · peak 530MB · cpu (2.4 + 98.7)% · up 12m 4s
 ```
 
-- **mem**: resident memory of Claude Code, plus every process below it.
+- **mem**: resident memory of Claude Code, plus every process below it and every detached process it started.
 - **peak**: Claude Code's highest resident memory. On macOS, where `ps` has no peak, it is the highest seen since the mod loaded.
 - **cpu**: share of one core since the last reading, as `top` shows it.
 - **up**: how long Claude Code has been running.
@@ -23,6 +23,7 @@ mem (484 + 215)MB · peak 530MB · cpu (2.4 + 98.7)% · up 12m 4s
 
 - **History:** two lines at the top chart the session's total memory and CPU (Claude Code and everything it started) over the history window (10 minutes by default; see Settings), each followed by the current value and the window's highest (`max`). Memory is scaled from the window's lowest to its highest point, and never to less than 64 MB or a tenth of its highest point (whichever is more), so a slow leak rises across the full height while small noise stays flat and a steady line sits mid-height; CPU is scaled from zero to one core, or to its highest point when that is more. Short spikes stay visible. Readings are drawn evenly spaced, so a gap (such as while the machine sleeps) does not show.
 - **Rows:** Claude Code's own row, then every process below it as a tree. A Bash command Claude ran shows as `$ <command>`; a `$ …` row also says what started it when it can tell — `· Bash`, `· Monitor`, `· subagent: <type>`, or `· agent` for one it cannot name — and the details name the subagent's task (commands started before the mod loaded show none); ▾/▸ marks a row with processes under it. Under the rows, **Child processes** sums every process below Claude Code and **Total** adds Claude Code's own.
+- **Detached:** processes the session started that no longer run under Claude Code (`nohup … &`, `setsid`, daemons) follow the tree under a **Detached** heading, with their own subtotal. They count toward the totals, the history, the status-line marker and the toasts, and can be stopped like any other row. In a sorted view their parent reads `detached`. The mod finds them by a variable, `PROC_STATS_SESSION`, that it sets for every command the session starts; if it cannot set it, a line under the rows says detached processes are not tracked.
 - **↑ / ↓** move between rows; the row you land on is selected and its full command, pid, parent, start time, memory and CPU show under the table.
 - **Enter or a click** selects a row, and on a row with processes under it collapses or expands it (collapsed, it shows its subtree's totals).
 - **s** sorts by CPU, memory or runtime (highest first, each row followed by its parent), then back to the tree.
@@ -35,11 +36,11 @@ TIME, then PID, give way on a narrow pane.
 
 ## Report
 
-`/proc-stats report` writes a summary of the session into the conversation, where Claude reads it too: the platform and how long Claude Code has run; the memory and CPU of Claude Code, its child processes and both together now; the highest memory and CPU of the history window and how long ago they were; the five processes using the most memory, with what started them; the marker level; and the last five alerts.
+`/proc-stats report` writes a summary of the session into the conversation, where Claude reads it too: the platform and how long Claude Code has run; the memory and CPU of Claude Code, its child processes and both together now; the highest memory and CPU of the history window and how long ago they were; the five processes using the most memory, with what started them; up to ten detached processes; the marker level; and the last five alerts.
 
 ## Platforms
 
-By default both views refresh every second on Linux, every 2 seconds on macOS and every 5 on Windows (configurable in Settings), and work on Linux (`/proc` and `ps`), macOS (`ps`) and Windows (PowerShell).
+By default both views refresh every second on Linux, every 2 seconds on macOS and every 5 on Windows (configurable in Settings), and work on Linux (`/proc` and `ps`), macOS (`ps`) and Windows (PowerShell). Detached processes are found on Linux (`/proc/<pid>/environ`, read once per process) and macOS (`ps eww`, at most every 10 seconds, so a new one can take that long to show), and not on Windows.
 
 ## Settings
 
@@ -56,8 +57,6 @@ In Claude Code's config menu (`/config`), under proc-stats:
 | Child processes on the status line | on | the `+` part |
 
 A value out of range is ignored and its default used.
-
-(Detached processes arrive in a later package; the settings exist now so the config menu does not change shape again.)
 
 ## Alerts
 
@@ -76,7 +75,7 @@ Answer `y` to add the marketplace, then choose a scope (user scope loads it in e
 
 ## Limits
 
-- A process that detaches from Claude Code (`nohup`, daemons) is no longer counted.
+- A detached process is found only if it keeps the environment it started with (a program that clears it, such as `env -i`, is not found), and only on Linux and macOS.
 - A command that starts and ends between two readings is not counted.
 - `+ ?` means the process table could not be read (for example no `ps` in a minimal container).
 

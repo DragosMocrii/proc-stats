@@ -134,3 +134,48 @@ test('report: a long command is cut to 80 code points', () => {
   const line = reportText(input({ reading: { snapshot: snapshot([long]) } })).split('\n')[4]
   expect(line).toBe(`  1. 20MB · 1.0% CPU · pid 11 · node ${'x'.repeat(74)}…`)
 })
+
+test('report: detached processes, their subtotal and their own list', () => {
+  const server = { ...row(40, 300, 12, 'node server.js'), ppid: 1, detached: true as const }
+  const worker = { ...row(41, 30, 2, 'node worker'), ppid: 40, depth: 1, detached: true as const }
+  const detached: Snapshot = {
+    ...snapshot([row(11, 20, 1), server, worker]),
+    detachedCount: 2,
+    detachedKb: 330 * MB,
+    detachedCpuPercent: 14,
+  }
+  expect(reportText(input({ reading: { snapshot: detached } }))).toBe(
+    [
+      'report · Linux · Claude Code pid 10 · up 1h 2m',
+      'Now: Claude Code 484MB, 2.0% CPU · 1 child process 20MB, 1.0% CPU · 2 detached 330MB, 14.0% CPU · total 834MB, 17.0% CPU',
+      'Peaks in the last 10 min: no history yet',
+      'Heaviest processes:',
+      '  1. 300MB · 12.0% CPU · pid 40 · node server.js · detached',
+      '  2. 30MB · 2.0% CPU · pid 41 · node worker · detached',
+      '  3. 20MB · 1.0% CPU · pid 11 · cmd11',
+      'Detached processes:',
+      '  1. 300MB · 12.0% CPU · pid 40 · node server.js',
+      '  2. 30MB · 2.0% CPU · pid 41 · node worker',
+      'Marker: none',
+      'Recent alerts: none',
+    ].join('\n'),
+  )
+})
+
+test('report: only detached processes, more than it lists', () => {
+  const many = Array.from({ length: 12 }, (_, i) => ({ ...row(40 + i, 12 - i, 0), ppid: 1, detached: true as const }))
+  const alone: Snapshot = { ...snapshot(many), detachedCount: 12, detachedKb: 78 * MB, detachedCpuPercent: 0 }
+  const lines = reportText(input({ reading: { snapshot: alone } })).split('\n')
+  expect(lines[1]).toBe('Now: Claude Code 484MB, 2.0% CPU · no child processes · 12 detached 78MB, 0.0% CPU · total 562MB, 2.0% CPU')
+  expect(lines[9]).toBe('Detached processes (10 of 12):')
+  expect(lines[19]).toBe('  10. 3MB · 0.0% CPU · pid 49 · cmd49')
+  expect(lines[20]).toBe('Marker: none')
+})
+
+test('report: says when detached processes are not tracked', () => {
+  const off: Snapshot = { ...snapshot([]), detachedOff: 'Detached processes are not tracked: the session mark could not be set.' }
+  expect(reportText(input({ reading: { snapshot: off } })).split('\n').slice(1, 3)).toEqual([
+    'Now: Claude Code 484MB, 2.0% CPU · no child processes',
+    'Detached processes are not tracked: the session mark could not be set.',
+  ])
+})
