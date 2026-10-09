@@ -1,9 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AlertState, History, PaneState, Point, Reading, StopState } from '../types'
+import type { AlertState, History, OriginCall, Origins, PaneState, Point, Reading, StopState } from '../types'
 import { historyCapacity, pointOf, pointSpacingMs, pushPoint, shouldRecord } from './history'
 import { EMPTY_ALERTS, markerFor, stepAlerts, worse } from './alerts'
+import { EMPTY_ORIGINS, matchOrigins } from './origin'
 import { drawPane } from './pane'
 import type { PaneHandlers } from './pane'
 import { buildSnapshot, capRows } from './snapshot'
@@ -45,6 +46,8 @@ const HISTORY = { plugin: 'proc-stats', key: 'history' } as const
 const ALERTS = { plugin: 'proc-stats', key: 'alerts' } as const
 const history = atom(HISTORY, { points: [] } as History)
 const alerts = atom(ALERTS, EMPTY_ALERTS as AlertState)
+const ORIGINS = { plugin: 'proc-stats', key: 'origins' } as const
+const origins = atom(ORIGINS, EMPTY_ORIGINS as Origins)
 // Long enough to read a process name and its numbers.
 const TOAST_MS = 8000
 const OPEN = { id: PANE, title: 'Processes' }
@@ -355,6 +358,15 @@ const startSampling = async ($: EngineInterface, settings: Settings) => {
         } catch {
           // The pane keeps its state this reading.
         }
+        try {
+          const kept = (await $.state.get(ORIGINS)).value ?? EMPTY_ORIGINS
+          const matched = matchOrigins(kept, snapshot, now.wallMs)
+          if (JSON.stringify(matched) !== JSON.stringify(kept)) {
+            await update($, origins, current => matchOrigins(current, snapshot, now.wallMs))
+          }
+        } catch {
+          // Origins catch up at the next reading.
+        }
         // A get reads one moment, so the points for the alerts come from the update itself.
         let points: Point[] = []
         try {
@@ -405,6 +417,24 @@ const startSampling = async ($: EngineInterface, settings: Settings) => {
   }
 }
 
+// Records a Bash or Monitor call before it runs, with the subagent whose call it is. Never throws:
+// a failure here costs the origin only, never the call.
+const recordCall = async ($: EngineInterface, tool: string, command: string | undefined, agentId: string | undefined) => {
+  if (!command) return
+  try {
+    const listed = agentId ? (await $.agent.list()).find(agent => agent.id === agentId) : undefined
+    const call: OriginCall = {
+      tool,
+      agent: listed ? { type: listed.type, description: listed.description } : null,
+      command,
+      at: await $.clock.now(),
+    }
+    await update($, origins, kept => ({ ...kept, calls: [...kept.calls, call] }))
+  } catch {
+    // The process will show without an origin.
+  }
+}
+
 // A settings change reloads the module, so they are read once per load.
 export const register: Register = (on, options) => {
   const settings = readSettings(options)
@@ -424,6 +454,19 @@ export const register: Register = (on, options) => {
 
     return started
   })
+
+  // Where processes come from: each Bash and Monitor call is recorded before it runs.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    await recordCall($, 'Bash', e.command, e.agentId)
+
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  on('tool.call', { tool: 'Monitor' }, async ($, e, next) => {
+    await recordCall($, 'Monitor', e.command, e.agentId)
+
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   on('command.run', { command: COMMAND }, async $ => {
     const opened = await $.ui.open({ ...OPEN, focus: true })
