@@ -103,6 +103,9 @@ export type Origins = { calls: OriginCall[]; byPid: Record<string, Origin & { st
 // One agent of `$.agent.list()`, trimmed to what the Subagents section draws; `name` only for a teammate.
 export type AgentEntry = { id: string; type: string; description: string; status: string; parentId?: string; name?: string }
 
+// The model and effort of an agent's latest request (`effort` as `turn.step` gave it; absent for a model without one).
+export type ModelUse = { model: string; effort?: string | number }
+
 // One row of the Subagents section: its label and status, its depth under its parent agent, and the
 // count and sums of the processes it started (and theirs).
 export type AgentRow = {
@@ -125,6 +128,7 @@ declare module 'claude-code' {
     // origins: recorded Bash/Monitor calls and the origins of listed processes.
     // session: the mark detached processes are found by, kept across reloads.
     // agents: the session's agents while the pane is open, for its Subagents section.
+    // models: the model and effort of each agent's latest request, by agent id ('' for the main conversation).
     'proc-stats': {
       reading: Reading
       isOpen: boolean
@@ -134,6 +138,7 @@ declare module 'claude-code' {
       origins: Origins
       session: SessionMark
       agents: AgentEntry[]
+      models: Record<string, ModelUse>
     }
   }
 }

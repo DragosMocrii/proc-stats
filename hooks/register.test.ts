@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import type { TestBody } from 'claude-code/testing'
+import type { Engine, TestBody } from 'claude-code/testing'
 
 import type { OriginCall } from '../types'
 
@@ -149,4 +149,59 @@ test('a recording failure still lets the call reach the tool, unchanged', async 
   expect(seen).toEqual(['npm test'])
   expect(answer.result).toBe('ran')
   expect(attempts > 0).toBe(true)
+})
+
+const MODELS = { plugin: 'proc-stats', key: 'models' } as const
+
+// What the model's response to a step is, from the bottom of the chain.
+const RESPONSE = { turnId: 't1', index: 0, answer: 'hi', toolUses: [], stopReason: 'end_turn', usage: null } as never
+
+// Runs one step through the plugin's hook, over a bottom that streams one chunk: what came out and what was written.
+const step = async ($: Engine, input: { model: string; effort?: 'high'; agentId?: string }) => {
+  const chunks: unknown[] = []
+  const stream = $.turn.step({ turnId: 't1', index: 0, messageCount: 1, ...input } as never)
+  let next = await stream.next()
+  while (!next.done) {
+    chunks.push(next.value)
+    next = await stream.next()
+  }
+
+  return { chunks, result: next.value }
+}
+
+test('a model request is recorded by its agent, written only on a change, and passes through unchanged', async ($, on) => {
+  const writes: unknown[] = []
+  on('state.set', MODELS, (_$, e, next) => {
+    writes.push(e.value)
+    return next(e)
+  })
+  const seen: unknown[] = []
+  on('turn.step', async function* (_$, e) {
+    seen.push(e)
+    yield { kind: 'text', index: 0, text: 'hi' }
+
+    return RESPONSE
+  })
+  const main = await step($, { model: 'claude-opus-5-5', effort: 'high' })
+  expect(main.chunks).toEqual([{ kind: 'text', index: 0, text: 'hi' }])
+  expect(main.result).toEqual(RESPONSE)
+  expect(seen).toEqual([{ turnId: 't1', index: 0, messageCount: 1, model: 'claude-opus-5-5', effort: 'high' }])
+  expect(writes).toEqual([{ '': { model: 'claude-opus-5-5', effort: 'high' } }])
+  await step($, { model: 'claude-opus-5-5', effort: 'high' })
+  expect(writes).toHaveLength(1)
+  await step($, { model: 'claude-haiku-5-5', agentId: 'a1' })
+  expect(writes).toHaveLength(2)
+  expect(writes[1]).toEqual({ '': { model: 'claude-opus-5-5', effort: 'high' }, a1: { model: 'claude-haiku-5-5' } })
+})
+
+test('a failing record still lets the request through', async ($, on) => {
+  on('state.set', MODELS, () => ({ deny: 'disk full' }))
+  on('turn.step', async function* () {
+    yield { kind: 'text', index: 0, text: 'hi' }
+
+    return RESPONSE
+  })
+  const out = await step($, { model: 'claude-opus-5-5' })
+  expect(out.chunks).toEqual([{ kind: 'text', index: 0, text: 'hi' }])
+  expect(out.result).toEqual(RESPONSE)
 })

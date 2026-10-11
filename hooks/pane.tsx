@@ -1,7 +1,8 @@
 import type { Elements, RenderSurface } from 'claude-code'
 
-import type { AgentEntry, AgentRow, Origins, PaneState, Point, Reading } from '../types'
+import type { AgentEntry, AgentRow, ModelUse, Origins, PaneState, Point, Reading } from '../types'
 import { agentRows } from './agents'
+import { modelText } from './models'
 import { originText } from './origin'
 import { formatBytes, formatDuration, formatPercent } from './format'
 import { sparkLines } from './sparkline'
@@ -62,9 +63,9 @@ export const commandCell = (view: ViewRow, width: number, origin?: string) => {
   return { main: fit(main, width - tailWidth), parent: fit(tail, tailWidth) }
 }
 
-// An agent row's command cell: tree lines and its label cut to fit, then, kept whole, its status.
-export const agentCell = (agent: AgentRow, prefix: string, width: number) => {
-  const tail = ` · ${agent.status}`
+// An agent row's command cell: tree lines and its label cut to fit, then, kept whole, its status and `extra`.
+export const agentCell = (agent: AgentRow, prefix: string, width: number, extra = '') => {
+  const tail = ` · ${agent.status}${extra}`
 
   return { main: fit(`${prefix}${agent.label}`, Math.max(1, width - Array.from(tail).length)), tail }
 }
@@ -76,6 +77,7 @@ export const drawPane = (
   points: Point[],
   origins: Origins,
   agents: AgentEntry[],
+  models: Record<string, ModelUse>,
   bodyColumns: number,
   handlers: PaneHandlers,
 ) => {
@@ -130,10 +132,12 @@ export const drawPane = (
   }
 
   const { engine } = snapshot
+  // Claude Code's row names the main conversation's model and effort, dim, once a request has told them.
+  const engineTail = modelText(models[''])
   const engineRow = row(
     `pid:${snapshot.pid}`,
     { pid: snapshot.pid, startMs: 0, hasChildren: false },
-    { main: fit('Claude Code', commandWidth), parent: '' },
+    { main: fit('Claude Code', commandWidth - Array.from(engineTail).length), parent: engineTail },
     numbers(formatBytes(engine.rssKb), formatPercent(engine.cpuPercent), formatDuration(engine.uptimeSeconds)),
     String(snapshot.pid),
     false,
@@ -164,7 +168,7 @@ export const drawPane = (
   const agentList = agentRows(agents, snapshot, origins)
   const agentPrefixes = treePrefixes(agentList)
   const agentLines = agentList.map((agent, index) => {
-    const { main, tail } = agentCell(agent, agentPrefixes[index] ?? '', commandWidth)
+    const { main, tail } = agentCell(agent, agentPrefixes[index] ?? '', commandWidth, modelText(models[agent.id]))
     const figures =
       agent.processCount === 0 ? numbers('—', '—', '') : numbers(formatBytes(agent.rssKb), formatPercent(agent.cpuPercent), '')
 

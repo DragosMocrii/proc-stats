@@ -220,3 +220,23 @@ test('a failing agent listing keeps the agents, and the readings and status line
   expect(readings.length).toBeGreaterThan(1)
   expect(statuses.length).toBeGreaterThan(1)
 })
+
+const MODELS = { plugin: 'proc-stats', key: 'models' } as const
+
+test('models of agents the listing no longer names are dropped while the pane is open; the main conversation stays', async ($, on) => {
+  const { clock } = startSession(on, 'Linux', () => '99\n 10 1 05:00\n')
+  procFiles(on, { 10: 1 }, {}, [], [])
+  on('state.get', IS_OPEN, () => ({ value: { value: true, version: 1 } }))
+  on('agent.list', () => ({ value: LISTED }))
+  const use = { model: 'claude-opus-5-5' }
+  on('state.get', MODELS, () => ({ value: { value: { '': use, a1: use, gone: use }, version: 1 } }))
+  const writes: unknown[] = []
+  on('state.set', MODELS, (_$, e, next) => {
+    writes.push(e.value)
+    return next(e)
+  })
+  await $.session.start(START)
+  await clock.settle()
+  await clock.advance(3000)
+  expect(writes[0]).toEqual({ '': use, a1: use })
+})

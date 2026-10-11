@@ -466,6 +466,8 @@ test('agent cells: the label cut to fit, the status kept whole', () => {
   // A tail as wide as the width or wider: the label keeps one cell.
   expect(agentCell(agent, '└ ', 10).main).toBe('…')
   expect(agentCell(agent, '└ ', 4).main).toBe('…')
+  // Extra text joins the tail, kept whole.
+  expect(agentCell(agent, '└ ', 50, ' · haiku-5-5')).toEqual({ main: fit('└ Explore: Find the tests', 28), tail: ' · running · haiku-5-5' })
 })
 
 const AGENTS_KEY = { plugin: 'proc-stats', key: 'agents' } as const
@@ -516,6 +518,32 @@ test('an ended agent still holding a process is drawn dim with its status', asyn
     expect(gone?.text).toContain('· not listed')
     const label = await ui.find({ type: 'Text', text: /Explore: Serve/ })
     expect(label?.props?.dimColor).toBe(true)
+    await ui.unmount()
+  }
+})
+
+const MODELS_KEY = { plugin: 'proc-stats', key: 'models' } as const
+
+test('model and effort: on Claude Code\'s row and each agent\'s status; nothing on Claude Code\'s row when unknown', async ($, on) => {
+  on('state.get', { plugin: 'proc-stats', key: 'reading' }, () => ({ value: { value: { snapshot }, version: 1 } }))
+  on('state.get', AGENTS_KEY, () => ({ value: { value: [{ id: 'a1', type: 'Explore', description: 'Find', status: 'running' }], version: 1 } }))
+  let models: Record<string, unknown> = { '': { model: 'claude-opus-5-5', effort: 'high' }, a1: { model: 'claude-haiku-5-5' } }
+  on('state.get', MODELS_KEY, () => ({ value: { value: models, version: 1 } }))
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'proc-stats', surface, component: 'Pane', requestId: 'proc-stats', props: { ...PANE_PROPS, bodyColumns: 100 } })
+    const main = await ui.find({ key: `pid:${snapshot.pid}` })
+    expect(main?.text).toContain('Claude Code')
+    expect(main?.text).toContain('· opus-5-5 · high')
+    expect((await ui.find({ key: 'agent:a1' }))?.text).toContain('· running · haiku-5-5')
+    await ui.unmount()
+  }
+  models = {}
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'proc-stats', surface, component: 'Pane', requestId: 'proc-stats', props: { ...PANE_PROPS, bodyColumns: 100 } })
+    const main = await ui.find({ key: `pid:${snapshot.pid}` })
+    expect(main?.text).toContain('Claude Code')
+    expect(main?.text).not.toContain(' · ')
+    expect((await ui.find({ key: 'agent:a1' }))?.text).toContain('· running')
     await ui.unmount()
   }
 })

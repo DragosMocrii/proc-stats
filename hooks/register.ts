@@ -1,13 +1,14 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AgentEntry, AlertState, History, Origin, OriginCall, Origins, PaneState, Point, Reading, SessionMark, StopState } from '../types'
+import type { AgentEntry, AlertState, History, ModelUse, Origin, OriginCall, Origins, PaneState, Point, Reading, SessionMark, StopState } from '../types'
 import { toEntries } from './agents'
 import { historyCapacity, pointOf, pointSpacingMs, pushPoint, shouldRecord } from './history'
 import { EMPTY_ALERTS, markerFor, stepAlerts, worse } from './alerts'
 import { candidatesOf, environHasMark, macListedPids, macMarkedPids, oursOf, rememberMarks, startedFrom, unreadOf } from './detached'
 import type { MarkCache } from './detached'
 import { CALL_TTL_MS, EMPTY_ORIGINS, matchOrigins, UNNAMED_AGENT } from './origin'
+import { pruneModels, withModel } from './models'
 import { drawPane } from './pane'
 import type { PaneHandlers } from './pane'
 import { buildSnapshot, capRows } from './snapshot'
@@ -55,6 +56,8 @@ const ORIGINS = { plugin: 'proc-stats', key: 'origins' } as const
 const origins = atom(ORIGINS, EMPTY_ORIGINS as Origins)
 const AGENTS = { plugin: 'proc-stats', key: 'agents' } as const
 const agents = atom(AGENTS, [] as AgentEntry[])
+const MODELS = { plugin: 'proc-stats', key: 'models' } as const
+const models = atom(MODELS, {} as Record<string, ModelUse>)
 const SESSION = { plugin: 'proc-stats', key: 'session' } as const
 const session = atom(SESSION, { id: '', startMs: 0 } as SessionMark)
 // macOS reads environments with one `ps eww` at most this often.
@@ -464,6 +467,10 @@ const startSampling = async ($: EngineInterface, settings: Settings, mark: Sessi
             const listed = toEntries(await $.agent.list())
             const kept = (await $.state.get(AGENTS)).value ?? []
             if (JSON.stringify(listed) !== JSON.stringify(kept)) await update($, agents, () => listed)
+            // The models of agents the listing does not name are forgotten.
+            const ids = listed.map(each => each.id)
+            const known = (await $.state.get(MODELS)).value ?? {}
+            if (pruneModels(known, ids) !== known) await update($, models, current => pruneModels(current, ids))
           }
         } catch {
           // The section keeps the last listing this reading.
@@ -591,6 +598,18 @@ const traceCall = async <E extends { tool_use_id: string; command?: unknown; age
   }
 }
 
+// Records the model and effort of an agent's request (`''` for the main conversation) when they changed.
+// Never throws: a failure here costs the display only, never the request.
+const recordModel = async ($: EngineInterface, key: string, model: string, effort: ModelUse['effort']) => {
+  try {
+    const use: ModelUse = { model, effort }
+    const kept = (await $.state.get(MODELS)).value ?? {}
+    if (withModel(kept, key, use) !== kept) await update($, models, current => withModel(current, key, use))
+  } catch {
+    // The row shows the model it had.
+  }
+}
+
 // The report from current state, as the person and the model read it.
 const report = async ($: EngineInterface, historyMinutes: number) =>
   reportText({
@@ -641,6 +660,15 @@ export const register: Register = (on, options) => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
+  // Which model and effort each request names, for the pane; recorded without waiting, the request passes untouched.
+  on('turn.step', async function* ($, e, next) {
+    void recordModel($, e.agentId ?? '', e.model, e.effort)
+
+    return yield* next(e)
+  }).catch(async function* ($, e, next) {
+    return yield* next(e)
+  })
+
   // Bare: the pane. `report`: the report as the command's output. Anything else: how to use it.
   on('command.run', { command: COMMAND }, async ($, e) => {
     const typed = e.args.trim()
@@ -685,6 +713,7 @@ export const register: Register = (on, options) => {
       (await read($, history)).points,
       await read($, origins),
       await read($, agents),
+      await read($, models),
       e.props.bodyColumns,
       paneHandlers($),
     ),
