@@ -544,7 +544,8 @@ test('model and effort: on Claude Code\'s row and each agent\'s status; nothing 
     const ui = await $.ui.mount({ plugin: 'proc-stats', surface, component: 'Pane', requestId: 'proc-stats', props: { ...PANE_PROPS, bodyColumns: 100 } })
     const main = await ui.find({ key: `pid:${snapshot.pid}` })
     expect(main?.text).toContain('Claude Code')
-    expect(main?.text).toContain('· opus-5-5 · high')
+    expect(main?.text).toMatch(/Claude Code {2,}opus-5-5 · high/)
+    expect(main?.text).not.toContain('Claude Code · ')
     expect((await ui.find({ key: 'agent:a1' }))?.text).toContain('· running · haiku-5-5')
     await ui.unmount()
   }

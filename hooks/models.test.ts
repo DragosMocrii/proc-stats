@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { modelName, modelText, pruneModels, withModel } from './models'
+import { modelName, modelParts, modelText, pruneModels, withModel } from './models'
 
 test('model names: after claude-, without a trailing date, with a context tag kept', () => {
   expect(modelName('claude-sonnet-5-5')).toBe('sonnet-5-5')
@@ -38,4 +38,11 @@ test('model text: nothing when unknown, else the name and the effort when there 
   expect(modelText({ model: 'claude-sonnet-5-5' })).toBe(' · sonnet-5-5')
   expect(modelText({ model: 'claude-opus-5-5', effort: 'high' })).toBe(' · opus-5-5 · high')
   expect(modelText({ model: 'claude-opus-5-5', effort: 8000 })).toBe(' · opus-5-5 · 8000')
+})
+
+test('model parts: nothing when unknown, else the name and the effort when there is one', () => {
+  expect(modelParts(undefined)).toBe('')
+  expect(modelParts({ model: 'claude-sonnet-5-5' })).toBe('sonnet-5-5')
+  expect(modelParts({ model: 'claude-opus-5-5', effort: 'high' })).toBe('opus-5-5 · high')
+  expect(modelParts({ model: 'claude-opus-5-5', effort: 8000 })).toBe('opus-5-5 · 8000')
 })

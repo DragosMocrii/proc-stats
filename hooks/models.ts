@@ -27,6 +27,13 @@ export const pruneModels = (kept: Record<string, ModelUse>, listedIds: readonly 
   return Object.fromEntries(stays.map(key => [key, kept[key]!]))
 }
 
+// The model and effort as shown, joined by ` · `: `model` and `model · effort` when known, else nothing.
+export const modelParts = (use: ModelUse | undefined): string =>
+  use === undefined ? '' : `${modelName(use.model)}${use.effort === undefined ? '' : ` · ${use.effort}`}`
+
 // The dim text after a name or status: ` · model` and ` · effort` when known, else nothing.
-export const modelText = (use: ModelUse | undefined): string =>
-  use === undefined ? '' : ` · ${modelName(use.model)}${use.effort === undefined ? '' : ` · ${use.effort}`}`
+export const modelText = (use: ModelUse | undefined): string => {
+  const parts = modelParts(use)
+
+  return parts === '' ? '' : ` · ${parts}`
+}

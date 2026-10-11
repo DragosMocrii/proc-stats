@@ -2,7 +2,7 @@ import type { Elements, RenderSurface } from 'claude-code'
 
 import type { AgentEntry, AgentRow, ModelUse, Origins, PaneState, Point, Reading } from '../types'
 import { agentRows } from './agents'
-import { modelText } from './models'
+import { modelParts, modelText } from './models'
 import { originText } from './origin'
 import { formatBytes, formatDuration, formatPercent } from './format'
 import { sparkLines } from './sparkline'
@@ -143,8 +143,9 @@ export const drawPane = (
   }
 
   const { engine } = snapshot
-  // Claude Code's row names the main conversation's model and effort, dim, once a request has told them.
-  const engineCell = tailedCell('Claude Code', '', modelText(models['']), commandWidth)
+  // Claude Code's row names the main conversation's model and effort, dim, once a request has told them; no separator, as it has no status.
+  const enginePartsText = modelParts(models[''])
+  const engineCell = tailedCell('Claude Code', '', enginePartsText === '' ? '' : `  ${enginePartsText}`, commandWidth)
   const engineRow = row(
     `pid:${snapshot.pid}`,
     { pid: snapshot.pid, startMs: 0, hasChildren: false },
