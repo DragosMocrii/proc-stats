@@ -66,7 +66,7 @@ export const commandCell = (view: ViewRow, width: number, origin?: string) => {
 export const agentCell = (agent: AgentRow, prefix: string, width: number) => {
   const tail = ` · ${agent.status}`
 
-  return { main: fit(`${prefix}${agent.label}`, width - Array.from(tail).length), tail }
+  return { main: fit(`${prefix}${agent.label}`, Math.max(1, width - Array.from(tail).length)), tail }
 }
 
 export const drawPane = (

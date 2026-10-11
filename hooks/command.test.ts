@@ -78,3 +78,25 @@ test('/proc-stats alone still opens the pane', async ($, on) => {
   expect(text).toBe('Processes pane opened.')
   expect(opened()).toBe(true)
 })
+
+test('/proc-stats writes the agents listing as it opens the pane', async ($, on) => {
+  watchOpen(on)
+  on('agent.list', () => ({ value: [{ id: 'a1', type: 'Explore', description: 'Find the tests', status: 'running' as const }] }))
+  const writes: unknown[] = []
+  on('state.set', { plugin: 'proc-stats', key: 'agents' } as const, (_$, e, next) => {
+    writes.push(e.value)
+    return next(e)
+  })
+  await $.command.run(run(''))
+  expect(writes).toEqual([[{ id: 'a1', type: 'Explore', description: 'Find the tests', status: 'running' }]])
+})
+
+test('/proc-stats still opens the pane when the agents listing fails', async ($, on) => {
+  const opened = watchOpen(on)
+  on('agent.list', () => {
+    throw new Error('no listing')
+  })
+  const { text } = await $.command.run(run(''))
+  expect(text).toBe('Processes pane opened.')
+  expect(opened()).toBe(true)
+})

@@ -463,6 +463,9 @@ test('agent cells: the label cut to fit, the status kept whole', () => {
   expect(agentCell(agent, '└ ', 40)).toEqual({ main: fit('└ Explore: Find the tests', 30), tail: ' · running' })
   // 20 cells less the 10 of ` · running`: the label gets 10.
   expect(agentCell(agent, '└ ', 20).main).toBe('└ Explore…')
+  // A tail as wide as the width or wider: the label keeps one cell.
+  expect(agentCell(agent, '└ ', 10).main).toBe('…')
+  expect(agentCell(agent, '└ ', 4).main).toBe('…')
 })
 
 const AGENTS_KEY = { plugin: 'proc-stats', key: 'agents' } as const
@@ -510,7 +513,7 @@ test('an ended agent still holding a process is drawn dim with its status', asyn
     const ui = await $.ui.mount({ plugin: 'proc-stats', surface, component: 'Pane', requestId: 'proc-stats', props: { ...PANE_PROPS, bodyColumns: 100 } })
     const gone = await ui.find({ key: 'agent:gone' })
     expect(gone?.text).toContain('Explore: Serve')
-    expect(gone?.text).toContain('· ended')
+    expect(gone?.text).toContain('· not listed')
     const label = await ui.find({ type: 'Text', text: /Explore: Serve/ })
     expect(label?.props?.dimColor).toBe(true)
     await ui.unmount()

@@ -654,6 +654,13 @@ export const register: Register = (on, options) => {
     if (typed !== '') return { text: `unknown argument "${typed}". ${USAGE}` }
     const opened = await $.ui.open({ ...OPEN, focus: true })
     await update($, isOpen, () => true)
+    // The Subagents section from the first draw, not only from the next reading.
+    try {
+      const listed = toEntries(await $.agent.list())
+      await update($, agents, () => listed)
+    } catch {
+      // The next reading fills it.
+    }
 
     return { text: opened.isPlaced ? 'Processes pane opened.' : 'Processes pane could not be placed.' }
   }).catch(($, e, next) =>

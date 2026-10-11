@@ -5,8 +5,9 @@ import { originOf } from './origin'
 
 export const ACTIVE_STATUSES: readonly string[] = ['pending', 'running', 'waiting', 'idle']
 
-// The status of an agent with processes that the listing no longer names.
-export const ENDED = 'ended'
+// The status of an agent with processes that the listing does not name: not necessarily ended, as a
+// workflow's agents and the engine's own forks carry ids no listing names.
+export const UNLISTED = 'not listed'
 
 // What `$.agent.list()` answers, as far as the section reads it.
 export type ListedAgent = {
@@ -81,7 +82,7 @@ export const agentRows = (agents: AgentEntry[], snapshot: Snapshot, origins: Ori
     ...agents.filter(agent => ACTIVE_STATUSES.includes(agent.status) || tallies.has(agent.id)),
     ...[...tallies]
       .filter(([id]) => !listed.has(id))
-      .map(([id, tally]) => ({ id, type: tally.type, description: tally.description, status: ENDED })),
+      .map(([id, tally]) => ({ id, type: tally.type, description: tally.description, status: UNLISTED })),
   ]
   const shown = new Set(kept.map(agent => agent.id))
   // An agent whose parent chain leaves the shown agents or loops is a root.

@@ -112,12 +112,12 @@ test('rows: active agents and ended ones with processes, in listing order; ended
   expect(shown[0]).toEqual({ id: 'a1', label: 'type-a1: task a1', status: 'running', isEnded: false, depth: 0, processCount: 0, rssKb: 0, cpuPercent: null })
 })
 
-test('an agent the listing no longer names, with processes, is a row with status ended', () => {
+test('an agent the listing no longer names, with processes, is a row with status not listed', () => {
   const rows = [row(11, 10, 0)]
   const shown = agentRows([entry('a1', 'running')], snapshotOf(rows), originsOf({ 11: 'gone' }, rows))
   expect(shown.map(each => [each.id, each.label, each.status, each.isEnded])).toEqual([
     ['a1', 'type-a1: task a1', 'running', false],
-    ['gone', 'type-gone: task gone', 'ended', true],
+    ['gone', 'type-gone: task gone', 'not listed', true],
   ])
 })
 
