@@ -104,8 +104,8 @@ test('a subagent call is recorded with its type and task; an unlisted agent as a
   await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1' } as never)
   await $.tool.call({ tool: 'Bash', command: 'pwd', agentId: 'gone' } as never)
   expect(recorded().map(each => [each.command, each.agent])).toEqual([
-    ['ls', { type: 'Explore', description: 'Find the tests' }],
-    ['pwd', { type: 'agent', description: '' }],
+    ['ls', { id: 'a1', type: 'Explore', description: 'Find the tests' }],
+    ['pwd', { id: 'gone', type: 'agent', description: '' }],
   ])
 })
 
@@ -117,7 +117,7 @@ test('a call whose agent listing fails is still an agent, never the main convers
   })
   on('tool.call', { tool: 'Bash' }, () => ({ result: 'ok' }))
   await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1' } as never)
-  expect(recorded().map(each => each.agent)).toEqual([{ type: 'agent', description: '' }])
+  expect(recorded().map(each => each.agent)).toEqual([{ id: 'a1', type: 'agent', description: '' }])
 })
 
 test('recording drops calls past the TTL', async ($, on) => {

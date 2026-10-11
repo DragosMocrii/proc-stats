@@ -89,8 +89,9 @@ export type PaneState = { sort: SortMode; collapsed: number[]; selected: Selecte
 // This session's mark: the id its commands carry in PROC_STATS_SESSION, and when it was made (ms since the epoch).
 export type SessionMark = { id: string; startMs: number }
 
-// Who started a process: the tool, and the subagent whose call it was (null for the main conversation).
-export type Origin = { tool: string; agent: { type: string; description: string } | null }
+// Who started a process: the tool, and the subagent whose call it was (null for the main conversation);
+// `id` is the agent's id in `$.agent.list()`, absent in origins recorded before it was kept.
+export type Origin = { tool: string; agent: { id?: string; type: string; description: string } | null }
 
 // A Bash or Monitor call recorded before it ran: its tool_use_id, its exact command (as a PreToolUse rewrite
 // left it), when (ms since the epoch), and when it settled (null while it runs).

@@ -510,12 +510,12 @@ const agentOf = async ($: EngineInterface, agentId: string | undefined): Promise
   if (!agentId) return null
   try {
     const listed = (await $.agent.list()).find(agent => agent.id === agentId)
-    if (listed) return { type: listed.type, description: listed.description }
+    if (listed) return { id: agentId, type: listed.type, description: listed.description }
   } catch {
     // Unnamed below.
   }
 
-  return { ...UNNAMED_AGENT }
+  return { id: agentId, ...UNNAMED_AGENT }
 }
 
 // Records a Bash or Monitor call before it runs, with the agent whose call it is, and drops calls
