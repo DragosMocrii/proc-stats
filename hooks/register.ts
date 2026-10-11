@@ -677,6 +677,7 @@ export const register: Register = (on, options) => {
       await read($, pane),
       (await read($, history)).points,
       await read($, origins),
+      await read($, agents),
       e.props.bodyColumns,
       paneHandlers($),
     ),

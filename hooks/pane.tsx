@@ -1,11 +1,12 @@
 import type { Elements, RenderSurface } from 'claude-code'
 
-import type { Origins, PaneState, Point, Reading } from '../types'
+import type { AgentEntry, AgentRow, Origins, PaneState, Point, Reading } from '../types'
+import { agentRows } from './agents'
 import { originText } from './origin'
 import { formatBytes, formatDuration, formatPercent } from './format'
 import { sparkLines } from './sparkline'
 import { confirmText } from './stop'
-import { detailLines, fit, isSelected, noteLine, totalLines, viewRows } from './view'
+import { detailLines, fit, isSelected, noteLine, totalLines, treePrefixes, viewRows } from './view'
 import type { ViewRow } from './view'
 
 const PID_WIDTH = 7
@@ -61,12 +62,20 @@ export const commandCell = (view: ViewRow, width: number, origin?: string) => {
   return { main: fit(main, width - tailWidth), parent: fit(tail, tailWidth) }
 }
 
+// An agent row's command cell: tree lines and its label cut to fit, then, kept whole, its status.
+export const agentCell = (agent: AgentRow, prefix: string, width: number) => {
+  const tail = ` · ${agent.status}`
+
+  return { main: fit(`${prefix}${agent.label}`, width - Array.from(tail).length), tail }
+}
+
 export const drawPane = (
   { Box, Text, Button }: Elements[RenderSurface],
   { snapshot, error }: Reading,
   state: PaneState,
   points: Point[],
   origins: Origins,
+  agents: AgentEntry[],
   bodyColumns: number,
   handlers: PaneHandlers,
 ) => {
@@ -151,6 +160,22 @@ export const drawPane = (
     ),
   ])
   const note = noteLine(snapshot)
+  // The Subagents section: one plain row each, in the table's columns, ended ones dim.
+  const agentList = agentRows(agents, snapshot, origins)
+  const agentPrefixes = treePrefixes(agentList)
+  const agentLines = agentList.map((agent, index) => {
+    const { main, tail } = agentCell(agent, agentPrefixes[index] ?? '', commandWidth)
+    const figures =
+      agent.processCount === 0 ? numbers('—', '—', '') : numbers(formatBytes(agent.rssKb), formatPercent(agent.cpuPercent), '')
+
+    return (
+      <Box key={`agent:${agent.id}`} flexDirection="row" paddingX={ROW_PADDING_X}>
+        <Text dimColor={agent.isEnded}>{`${pidCell('')}${main}`}</Text>
+        <Text dimColor>{tail}</Text>
+        <Text dimColor={agent.isEnded}>{figures}</Text>
+      </Box>
+    )
+  })
   const totals = totalLines(snapshot)
   const details = detailLines(snapshot, state.selected, origins)
   const stop = state.stop
@@ -189,6 +214,14 @@ export const drawPane = (
       {snapshot.detachedOff !== undefined && (
         <Box paddingX={ROW_PADDING_X}>
           <Text dimColor>{`${pidCell('')}${snapshot.detachedOff}`}</Text>
+        </Box>
+      )}
+      {agentLines.length > 0 && (
+        <Box flexDirection="column" marginTop={1}>
+          <Box key="agents-heading" paddingX={ROW_PADDING_X}>
+            <Text bold dimColor>{`${pidCell('')}Subagents`}</Text>
+          </Box>
+          {agentLines}
         </Box>
       )}
       {totals.length > 0 && (

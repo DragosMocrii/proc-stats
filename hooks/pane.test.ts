@@ -2,9 +2,9 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import type { PaneState, StopState } from '../types'
+import type { AgentRow, Origins, PaneState, StopState } from '../types'
 import { engine, MB, proc, statLine } from './fixtures'
-import { commandCell, paneColumns } from './pane'
+import { agentCell, commandCell, paneColumns } from './pane'
 import { buildSnapshot } from './snapshot'
 import type { Timed } from './snapshot'
 import { EMPTY_PANE, fit, viewRows } from './view'
@@ -456,4 +456,63 @@ test('detached processes: a heading of their own in the tree, none when sorted; 
   await ui.press({ key: 'sort' })
   expect(await ui.find({ type: 'Text', text: /Detached processes are not tracked/ })).toBeDefined()
   await ui.unmount()
+})
+
+test('agent cells: the label cut to fit, the status kept whole', () => {
+  const agent: AgentRow = { id: 'a1', label: 'Explore: Find the tests', status: 'running', isEnded: false, depth: 0, processCount: 0, rssKb: 0, cpuPercent: null }
+  expect(agentCell(agent, '└ ', 40)).toEqual({ main: fit('└ Explore: Find the tests', 30), tail: ' · running' })
+  // 20 cells less the 10 of ` · running`: the label gets 10.
+  expect(agentCell(agent, '└ ', 20).main).toBe('└ Explore…')
+})
+
+const AGENTS_KEY = { plugin: 'proc-stats', key: 'agents' } as const
+const ORIGINS_KEY = { plugin: 'proc-stats', key: 'origins' } as const
+
+test('the Subagents section: listed agents with their processes; absent with none', async ($, on) => {
+  on('state.get', { plugin: 'proc-stats', key: 'reading' }, () => ({ value: { value: { snapshot }, version: 1 } }))
+  const row11 = snapshot.children!.find(each => each.pid === 11)!
+  let byPid: Origins['byPid'] = { 11: { tool: 'Bash', agent: { id: 'a1', type: 'Explore', description: 'Find' }, startMs: row11.startMs } }
+  on('state.get', ORIGINS_KEY, () => ({ value: { value: { calls: [], byPid }, version: 1 } }))
+  let listed = [
+    { id: 'a1', type: 'Explore', description: 'Find', status: 'running' },
+    { id: 'a2', type: 'general-purpose', description: 'Review', status: 'idle', parentId: 'a1' },
+  ]
+  on('state.get', AGENTS_KEY, () => ({ value: { value: listed, version: 1 } }))
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'proc-stats', surface, component: 'Pane', requestId: 'proc-stats', props: { ...PANE_PROPS, bodyColumns: 100 } })
+    expect(await ui.find({ type: 'Text', text: /Subagents/ })).toBeDefined()
+    // a1 has 11 and 12 under it: 10MB + 20MB.
+    const a1 = await ui.find({ key: 'agent:a1' })
+    expect(a1?.text).toContain('Explore: Find')
+    expect(a1?.text).toContain('· running')
+    expect(a1?.text).toContain('30MB')
+    const a2 = await ui.find({ key: 'agent:a2' })
+    expect(a2?.text).toContain('└ general-purpose: Review')
+    expect(a2?.text).toContain('—')
+    await ui.unmount()
+  }
+  // No agents listed and none holding a process.
+  listed = []
+  byPid = {}
+  const ui = await $.ui.mount({ plugin: 'proc-stats', surface: 'terminal', component: 'Pane', requestId: 'proc-stats', props: { ...PANE_PROPS, bodyColumns: 100 } })
+  expect(await ui.find({ type: 'Text', text: /Subagents/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('an ended agent still holding a process is drawn dim with its status', async ($, on) => {
+  on('state.get', { plugin: 'proc-stats', key: 'reading' }, () => ({ value: { value: { snapshot }, version: 1 } }))
+  const row11 = snapshot.children!.find(each => each.pid === 11)!
+  on('state.get', ORIGINS_KEY, () => ({
+    value: { value: { calls: [], byPid: { 11: { tool: 'Bash', agent: { id: 'gone', type: 'Explore', description: 'Serve' }, startMs: row11.startMs } } }, version: 1 },
+  }))
+  on('state.get', AGENTS_KEY, () => ({ value: { value: [], version: 1 } }))
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'proc-stats', surface, component: 'Pane', requestId: 'proc-stats', props: { ...PANE_PROPS, bodyColumns: 100 } })
+    const gone = await ui.find({ key: 'agent:gone' })
+    expect(gone?.text).toContain('Explore: Serve')
+    expect(gone?.text).toContain('· ended')
+    const label = await ui.find({ type: 'Text', text: /Explore: Serve/ })
+    expect(label?.props?.dimColor).toBe(true)
+    await ui.unmount()
+  }
 })
