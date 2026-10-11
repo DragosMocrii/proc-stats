@@ -466,6 +466,17 @@ test('agent cells: the label cut to fit, the status kept whole', () => {
   // A tail as wide as the width or wider: the label keeps one cell.
   expect(agentCell(agent, '└ ', 10).main).toBe('…')
   expect(agentCell(agent, '└ ', 4).main).toBe('…')
+  // Narrow: the cell stays 12 cells, the status kept, the extra cut to what is left.
+  const narrow = agentCell(agent, '└ ', 12, ' · sonnet-5-5 · high')
+  expect(Array.from(narrow.main + narrow.tail)).toHaveLength(12)
+  expect(narrow.tail.startsWith(' · running')).toBe(true)
+  expect(narrow.tail).toBe(' · running')
+  const wide = agentCell(agent, '└ ', 40, ' · sonnet-5-5 · high')
+  expect(wide.tail).toBe(' · running · sonnet-5-5 · high')
+  expect(Array.from(wide.main + wide.tail)).toHaveLength(40)
+  const mid = agentCell(agent, '└ ', 22, ' · sonnet-5-5 · high')
+  expect(Array.from(mid.main + mid.tail)).toHaveLength(22)
+  expect(mid.tail).toBe(' · running · sonnet-…')
   // Extra text joins the tail, kept whole.
   expect(agentCell(agent, '└ ', 50, ' · haiku-5-5')).toEqual({ main: fit('└ Explore: Find the tests', 28), tail: ' · running · haiku-5-5' })
 })
@@ -544,6 +555,23 @@ test('model and effort: on Claude Code\'s row and each agent\'s status; nothing 
     expect(main?.text).toContain('Claude Code')
     expect(main?.text).not.toContain(' · ')
     expect((await ui.find({ key: 'agent:a1' }))?.text).toContain('· running')
+    await ui.unmount()
+  }
+})
+
+test('at the narrowest command column the rows keep the header\'s width', async ($, on) => {
+  on('state.get', { plugin: 'proc-stats', key: 'reading' }, () => ({ value: { value: { snapshot }, version: 1 } }))
+  on('state.get', AGENTS_KEY, () => ({ value: { value: [{ id: 'a1', type: 'Explore', description: 'Find', status: 'running' }], version: 1 } }))
+  on('state.get', MODELS_KEY, () => ({ value: { value: { '': { model: 'claude-opus-5-5', effort: 'high' }, a1: { model: 'claude-sonnet-5-5', effort: 'high' } }, version: 1 } }))
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'proc-stats', surface, component: 'Pane', requestId: 'proc-stats', props: { ...PANE_PROPS, bodyColumns: 30 } })
+    const header = await ui.find({ type: 'Text', text: /COMMAND/ })
+    const main = await ui.find({ key: `pid:${snapshot.pid}` })
+    const agent = await ui.find({ key: 'agent:a1' })
+    const width = Array.from(header?.text ?? '').length
+    expect(width).toBeGreaterThan(0)
+    expect(Array.from(main?.text ?? '')).toHaveLength(width)
+    expect(Array.from(agent?.text ?? '')).toHaveLength(width)
     await ui.unmount()
   }
 })

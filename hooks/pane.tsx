@@ -63,12 +63,23 @@ export const commandCell = (view: ViewRow, width: number, origin?: string) => {
   return { main: fit(main, width - tailWidth), parent: fit(tail, tailWidth) }
 }
 
-// An agent row's command cell: tree lines and its label cut to fit, then, kept whole, its status and `extra`.
-export const agentCell = (agent: AgentRow, prefix: string, width: number, extra = '') => {
-  const tail = ` · ${agent.status}${extra}`
+// A command cell of exactly `width` cells: `head` cut to fit, then a dim tail of `status` and `extra`
+// that takes at most width - 1 cells. The status stays whole when it fits; `extra` is cut to what is left.
+const tailedCell = (head: string, status: string, extra: string, width: number) => {
+  const room = Math.max(0, width - 1)
+  const statusCells = Array.from(status).length
+  const left = room - statusCells
+  const shownStatus = left >= 0 ? status : fit(status, room)
+  const shownExtra = left <= 1 ? '' : Array.from(extra).length <= left ? extra : fit(extra, left)
+  const tail = `${shownStatus}${shownExtra}`
 
-  return { main: fit(`${prefix}${agent.label}`, Math.max(1, width - Array.from(tail).length)), tail }
+  return { main: fit(head, width - Array.from(tail).length), tail }
 }
+
+// An agent row's command cell: tree lines and its label cut to fit, then its status and `extra`, which give way
+// (extra first) so the cell stays `width` cells.
+export const agentCell = (agent: AgentRow, prefix: string, width: number, extra = '') =>
+  tailedCell(`${prefix}${agent.label}`, ` · ${agent.status}`, extra, width)
 
 export const drawPane = (
   { Box, Text, Button }: Elements[RenderSurface],
@@ -133,11 +144,11 @@ export const drawPane = (
 
   const { engine } = snapshot
   // Claude Code's row names the main conversation's model and effort, dim, once a request has told them.
-  const engineTail = modelText(models[''])
+  const engineCell = tailedCell('Claude Code', '', modelText(models['']), commandWidth)
   const engineRow = row(
     `pid:${snapshot.pid}`,
     { pid: snapshot.pid, startMs: 0, hasChildren: false },
-    { main: fit('Claude Code', commandWidth - Array.from(engineTail).length), parent: engineTail },
+    { main: engineCell.main, parent: engineCell.tail },
     numbers(formatBytes(engine.rssKb), formatPercent(engine.cpuPercent), formatDuration(engine.uptimeSeconds)),
     String(snapshot.pid),
     false,
