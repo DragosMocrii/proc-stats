@@ -12,10 +12,14 @@ const ran = (stdout: string) => ({ value: { stdout, stderr: '', exitCode: 0, isS
 // A session on `os` under a mocked clock at NOW: the mark it sets (or the refusal), and each reading it
 // writes. `answer` gives the output of each other command, by its argv joined with spaces.
 const startSession = (on: On, os: 'Linux' | 'Darwin', answer: (argv: string, marks: string[]) => string, isEnvRefused = false) => {
+  const statuses: unknown[] = []
   const clock = mock.clock(on, { now: NOW })
   on('session.start', () => ({ cwd: '/' }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
-  on('ui.status', () => ({ value: undefined }))
+  on('ui.status', (_$, e) => {
+    statuses.push(e)
+    return { value: undefined }
+  })
   mock.env(on, {})
   const marks: string[] = []
   on('env.set', (_$, e) => {
@@ -35,7 +39,7 @@ const startSession = (on: On, os: 'Linux' | 'Darwin', answer: (argv: string, mar
     return ran(answer(argv, marks))
   })
 
-  return { clock, marks, readings }
+  return { clock, marks, readings, statuses }
 }
 
 // Linux /proc files: each pid with its parent, 1 MB, started 10 s ago; `environs` by pid (others unreadable).
@@ -151,4 +155,68 @@ test('macOS: one ps eww over the new processes finds the marked ones', async ($,
   expect(snapshot?.children?.map(row => [row.pid, row.detached ?? false, row.command])).toEqual([[40, true, 'node server.js']])
   expect(readings.length).toBe(2)
   expect(scans).toEqual(['ps eww -o pid=,command= -p 40,41'])
+})
+
+const AGENTS = { plugin: 'proc-stats', key: 'agents' } as const
+const IS_OPEN = { plugin: 'proc-stats', key: 'isOpen' } as const
+const LISTED = [{ id: 'a1', type: 'Explore', description: 'Find the tests', status: 'running' as const }]
+
+// Each agents write the plugin makes.
+const watchAgents = (on: On) => {
+  const writes: unknown[] = []
+  on('state.set', AGENTS, (_$, e, next) => {
+    writes.push(e.value)
+    return next(e)
+  })
+
+  return writes
+}
+
+test('agents are kept while the pane is open, written only when they change', async ($, on) => {
+  const { clock } = startSession(on, 'Linux', () => '99\n 10 1 05:00\n')
+  procFiles(on, { 10: 1 }, {}, [], [])
+  on('state.get', IS_OPEN, () => ({ value: { value: true, version: 1 } }))
+  let lists = 0
+  on('agent.list', () => {
+    lists++
+    return { value: LISTED }
+  })
+  const writes = watchAgents(on)
+  await $.session.start(START)
+  await clock.settle()
+  await clock.advance(3000)
+  expect(lists).toBeGreaterThan(1)
+  expect(writes).toEqual([[{ id: 'a1', type: 'Explore', description: 'Find the tests', status: 'running' }]])
+})
+
+test('agents are not fetched while the pane is closed', async ($, on) => {
+  const { clock } = startSession(on, 'Linux', () => '99\n 10 1 05:00\n')
+  procFiles(on, { 10: 1 }, {}, [], [])
+  let lists = 0
+  on('agent.list', () => {
+    lists++
+    return { value: LISTED }
+  })
+  const writes = watchAgents(on)
+  await $.session.start(START)
+  await clock.settle()
+  await clock.advance(3000)
+  expect(lists).toBe(0)
+  expect(writes).toEqual([])
+})
+
+test('a failing agent listing keeps the agents, and the readings and status line still go out', async ($, on) => {
+  const { clock, readings, statuses } = startSession(on, 'Linux', () => '99\n 10 1 05:00\n')
+  procFiles(on, { 10: 1 }, {}, [], [])
+  on('state.get', IS_OPEN, () => ({ value: { value: true, version: 1 } }))
+  on('agent.list', () => {
+    throw new Error('unavailable')
+  })
+  const writes = watchAgents(on)
+  await $.session.start(START)
+  await clock.settle()
+  await clock.advance(3000)
+  expect(writes).toEqual([])
+  expect(readings.length).toBeGreaterThan(1)
+  expect(statuses.length).toBeGreaterThan(1)
 })

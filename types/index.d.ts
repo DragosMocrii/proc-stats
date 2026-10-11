@@ -124,6 +124,7 @@ declare module 'claude-code' {
     // pane: the Processes pane's sort, collapsed rows, selection and stop in progress.
     // origins: recorded Bash/Monitor calls and the origins of listed processes.
     // session: the mark detached processes are found by, kept across reloads.
+    // agents: the session's agents while the pane is open, for its Subagents section.
     'proc-stats': {
       reading: Reading
       isOpen: boolean
@@ -132,6 +133,7 @@ declare module 'claude-code' {
       pane: PaneState
       origins: Origins
       session: SessionMark
+      agents: AgentEntry[]
     }
   }
 }

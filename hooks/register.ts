@@ -1,7 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AlertState, History, Origin, OriginCall, Origins, PaneState, Point, Reading, SessionMark, StopState } from '../types'
+import type { AgentEntry, AlertState, History, Origin, OriginCall, Origins, PaneState, Point, Reading, SessionMark, StopState } from '../types'
+import { toEntries } from './agents'
 import { historyCapacity, pointOf, pointSpacingMs, pushPoint, shouldRecord } from './history'
 import { EMPTY_ALERTS, markerFor, stepAlerts, worse } from './alerts'
 import { candidatesOf, environHasMark, macListedPids, macMarkedPids, oursOf, rememberMarks, startedFrom, unreadOf } from './detached'
@@ -44,13 +45,16 @@ const READING = { plugin: 'proc-stats', key: 'reading' } as const
 const PANE_STATE = { plugin: 'proc-stats', key: 'pane' } as const
 const reading = atom(READING, {} as Reading)
 const pane = atom(PANE_STATE, EMPTY_PANE as PaneState)
-const isOpen = atom({ plugin: 'proc-stats', key: 'isOpen' } as const, false)
+const IS_OPEN = { plugin: 'proc-stats', key: 'isOpen' } as const
+const isOpen = atom(IS_OPEN, false)
 const HISTORY = { plugin: 'proc-stats', key: 'history' } as const
 const ALERTS = { plugin: 'proc-stats', key: 'alerts' } as const
 const history = atom(HISTORY, { points: [] } as History)
 const alerts = atom(ALERTS, EMPTY_ALERTS as AlertState)
 const ORIGINS = { plugin: 'proc-stats', key: 'origins' } as const
 const origins = atom(ORIGINS, EMPTY_ORIGINS as Origins)
+const AGENTS = { plugin: 'proc-stats', key: 'agents' } as const
+const agents = atom(AGENTS, [] as AgentEntry[])
 const SESSION = { plugin: 'proc-stats', key: 'session' } as const
 const session = atom(SESSION, { id: '', startMs: 0 } as SessionMark)
 // macOS reads environments with one `ps eww` at most this often.
@@ -454,6 +458,16 @@ const startSampling = async ($: EngineInterface, settings: Settings, mark: Sessi
         } catch {
           // Origins catch up at the next reading.
         }
+        // The pane's Subagents section, while the pane is open: the listing, written when it changed.
+        try {
+          if ((await $.state.get(IS_OPEN)).value) {
+            const listed = toEntries(await $.agent.list())
+            const kept = (await $.state.get(AGENTS)).value ?? []
+            if (JSON.stringify(listed) !== JSON.stringify(kept)) await update($, agents, () => listed)
+          }
+        } catch {
+          // The section keeps the last listing this reading.
+        }
         // A get reads one moment, so the points for the alerts come from the update itself.
         let points: Point[] = []
         try {
@@ -650,6 +664,8 @@ export const register: Register = (on, options) => {
   on('ui.close', { id: PANE }, async ($, e, next) => {
     const closed = await next(e)
     await update($, isOpen, () => false)
+    // A reopened pane shows no statuses from before.
+    await update($, agents, () => [])
 
     return closed
   }).catch(($, e, next) => next(e))
