@@ -100,6 +100,22 @@ export type OriginCall = Origin & { id: string; command: string; at: number; set
 // Calls not yet matched to a process, and the origins of listed processes by pid (with their start).
 export type Origins = { calls: OriginCall[]; byPid: Record<string, Origin & { startMs: number }> }
 
+// One agent of `$.agent.list()`, trimmed to what the Subagents section draws; `name` only for a teammate.
+export type AgentEntry = { id: string; type: string; description: string; status: string; parentId?: string; name?: string }
+
+// One row of the Subagents section: its label and status, its depth under its parent agent, and the
+// count and sums of the processes it started (and theirs).
+export type AgentRow = {
+  id: string
+  label: string
+  status: string
+  isEnded: boolean
+  depth: number
+  processCount: number
+  rssKb: number
+  cpuPercent: number | null
+}
+
 declare module 'claude-code' {
   interface PluginState {
     // isOpen: whether the person has the pane open, so a reload can reopen it.
